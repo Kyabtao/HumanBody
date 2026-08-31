@@ -1,0 +1,19 @@
+{
+  "name": "humanbody-3d",
+  "private": true,
+  "version": "1.0.0",
+  "description": "An interactive 3D human anatomy atlas that teaches the body from Class 1 basics to PhD-level detail.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "setup-pages": "mkdir -p .github/workflows && cp deploy/*.yml .github/workflows/ && echo \"GitHub Pages workflows installed in .github/workflows \u2014 commit and push them, then enable Pages \u2192 Source: GitHub Actions\""
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "vite": "^8.2.2"
+  }
+}

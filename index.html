@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <title>HumanBody 3D — Learn the human body from Class 1 to PhD</title>
+    <meta
+      name="description"
+      content="An interactive 3D atlas of the human body: explore every organ system, bone, muscle, vessel and cell, with explanations that scale from primary school to PhD level."
+    />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧍</text></svg>" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <!-- floating hover label -->
+      <div id="hoverLabel" class="hover-label" hidden></div>
+
+      <header id="topbar">
+        <div class="brand">
+          <span class="brand-mark">🧍</span>
+          <div class="brand-text">
+            <strong>HumanBody<span class="brand-3d">3D</span></strong>
+            <span class="brand-sub">From Class 1 to PhD · interactive anatomy</span>
+          </div>
+        </div>
+
+        <div class="level-switch" id="levelSwitch" role="tablist" aria-label="Learning level"></div>
+
+        <div class="top-actions">
+          <div class="search-wrap">
+            <input
+              id="search"
+              type="search"
+              autocomplete="off"
+              placeholder="Search 170+ parts…  (press /)"
+              aria-label="Search body parts"
+            />
+            <div id="searchResults" class="search-results" hidden></div>
+          </div>
+          <button class="btn ghost" id="btnTour" title="Guided tour for this level">🎒 Tour</button>
+          <button class="btn ghost" id="btnQuiz" title="Test yourself">🎯 Quiz</button>
+          <button class="btn ghost" id="btnHelp" title="How to use">?</button>
+        </div>
+      </header>
+
+      <!-- LEFT: systems + parts -->
+      <aside id="leftPanel" class="panel left">
+        <div class="panel-head">
+          <h2>Body Systems</h2>
+          <div class="mini-actions">
+            <button class="chip tiny" id="btnAllSystems">All</button>
+            <button class="chip tiny" id="btnNoSystems">None</button>
+          </div>
+        </div>
+        <div id="systemList" class="system-list"></div>
+        <div class="panel-head sub">
+          <h2 id="partsTitle">Parts</h2>
+          <span class="count" id="partsCount"></span>
+        </div>
+        <div id="partList" class="part-list"></div>
+      </aside>
+
+      <!-- RIGHT: details -->
+      <aside id="rightPanel" class="panel right" hidden>
+        <button class="close-btn" id="btnCloseDetails" aria-label="Close">×</button>
+        <div id="details"></div>
+      </aside>
+
+      <!-- BOTTOM TOOLBAR -->
+      <div id="toolbar">
+        <div class="tool-group" id="viewGroup">
+          <span class="tool-label">View</span>
+          <button class="chip" data-view="front">Front</button>
+          <button class="chip" data-view="back">Back</button>
+          <button class="chip" data-view="left">Left</button>
+          <button class="chip" data-view="right">Right</button>
+          <button class="chip" data-view="top">Top</button>
+        </div>
+        <div class="tool-group">
+          <span class="tool-label">Focus</span>
+          <button class="chip" data-focus="head">Head</button>
+          <button class="chip" data-focus="torso">Torso</button>
+          <button class="chip" data-focus="legs">Legs</button>
+          <button class="chip" data-focus="reset">Reset</button>
+        </div>
+        <div class="tool-group" id="modeGroup">
+          <button class="chip toggle" id="btnXray">🩻 X-ray</button>
+          <button class="chip toggle" id="btnRotate">🔄 Spin</button>
+          <button class="chip toggle" id="btnClip">✂️ Slice</button>
+        </div>
+        <div class="tool-group" id="sliceGroup" hidden>
+          <span class="tool-label">Slice</span>
+          <input id="clipRange" type="range" min="-0.35" max="0.35" step="0.005" value="0.5" />
+          <select id="clipAxis" class="mini-select">
+            <option value="z">Front–back</option>
+            <option value="y">Top–bottom</option>
+            <option value="x">Side–side</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="statusbar">
+        <span id="statusText">Click any part of the body to learn about it.</span>
+        <span class="spacer"></span>
+        <span class="stat" id="statCounts"></span>
+      </div>
+
+      <!-- MODALS -->
+      <div id="quizModal" class="modal" hidden>
+        <div class="modal-card">
+          <button class="close-btn" id="btnCloseQuiz" aria-label="Close">×</button>
+          <div id="quizBody"></div>
+        </div>
+      </div>
+
+      <div id="tourModal" class="tour-card" hidden>
+        <div class="tour-head">
+          <span id="tourStepLabel">Tour</span>
+          <button class="close-btn" id="btnCloseTour" aria-label="Close">×</button>
+        </div>
+        <h3 id="tourTitle"></h3>
+        <p id="tourText"></p>
+        <div class="tour-actions">
+          <button class="btn ghost" id="tourPrev">‹ Back</button>
+          <span id="tourProgress" class="tour-progress"></span>
+          <button class="btn primary" id="tourNext">Next ›</button>
+        </div>
+      </div>
+
+      <div id="helpModal" class="modal" hidden>
+        <div class="modal-card">
+          <button class="close-btn" id="btnCloseHelp" aria-label="Close">×</button>
+          <h2>How to use HumanBody 3D</h2>
+          <ul class="help-list">
+            <li><b>Drag</b> to rotate · <b>Scroll</b> to zoom · <b>Right-drag</b> to pan · <b>Click</b> a part to study it.</li>
+            <li>Pick a <b>level</b> at the top: the same 3D body is explained differently for Class 1, Class 6, Class 10, an undergraduate or a PhD student.</li>
+            <li>Toggle <b>systems</b> on the left to add or remove layers — skin, bone, muscle, organs, vessels, nerves.</li>
+            <li>Use <b>X-ray</b> to fade the skin, <b>Slice</b> to cut the body open, and <b>Micro view</b> (inside a part, at Undergraduate level or above) to zoom into cells and tissues.</li>
+            <li>Press <b>🎯 Quiz</b> to test yourself and <b>🎒 Tour</b> for a guided lesson at your level.</li>
+            <li>Shortcuts: <b>1–5</b> level · <b>/</b> search · <b>X</b> x-ray · <b>R</b> reset view · <b>Esc</b> close panels.</li>
+          </ul>
+          <p class="muted small">
+            This atlas is an educational model. Anatomy is stylised, not patient-specific, and it is not a medical device:
+            always consult a clinician for medical decisions.
+          </p>
+        </div>
+      </div>
+
+      <div id="loading" class="loading">
+        <div class="loading-inner">
+          <div class="pulse"></div>
+          <p>Building your 3D body…</p>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
