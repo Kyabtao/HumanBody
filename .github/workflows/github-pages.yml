@@ -1,0 +1,2 @@
+npm run setup-pages     # copies deploy/*.yml → .github/workflows/
+git add .github && git commit -m "Add Pages workflows" && git push
