@@ -34,14 +34,54 @@ export class PlateView {
   /* ---------------- interaction ---------------- */
   _bind() {
     const vp = this.viewport;
+    // Pointer bookkeeping is shared by mouse, pen and touch: one active pointer
+    // pans, two pinch-zoom around the midpoint between the fingers.
+    const pointers = new Map();
     let drag = null;
+    let pinch = null;
     let moved = 0;
+
+    const center = () => {
+      const pts = [...pointers.values()];
+      return {
+        x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
+        y: pts.reduce((a, p) => a + p.y, 0) / pts.length,
+      };
+    };
+    const spread = () => {
+      const [a, b] = [...pointers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+
     vp.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, px: this.pan.x, py: this.pan.y };
-      moved = 0;
-      vp.classList.add('dragging');
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      vp.setPointerCapture?.(e.pointerId);
+      if (pointers.size === 1) {
+        drag = { x: e.clientX, y: e.clientY, px: this.pan.x, py: this.pan.y };
+        pinch = null;
+        moved = 0;
+        vp.classList.add('dragging');
+      } else if (pointers.size === 2) {
+        drag = null;
+        const c = center();
+        const r = vp.getBoundingClientRect();
+        pinch = { dist: spread(), zoom: this.zoom, cx: c.x - r.left, cy: c.y - r.top, panX: this.pan.x, panY: this.pan.y };
+        moved = 99; // a pinch is never a tap
+      }
     });
-    window.addEventListener('pointermove', (e) => {
+
+    const onMove = (e) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && pointers.size >= 2) {
+        const f = spread() / Math.max(1, pinch.dist);
+        const next = Math.min(9, Math.max(0.5, pinch.zoom * f));
+        const k = next / pinch.zoom;
+        this.pan.x = pinch.cx - (pinch.cx - pinch.panX) * k;
+        this.pan.y = pinch.cy - (pinch.cy - pinch.panY) * k;
+        this.zoom = next;
+        this._applyTransform();
+        return;
+      }
       if (!drag) return;
       const dx = e.clientX - drag.x;
       const dy = e.clientY - drag.y;
@@ -49,12 +89,48 @@ export class PlateView {
       this.pan.x = drag.px + dx;
       this.pan.y = drag.py + dy;
       this._applyTransform();
+    };
+    window.addEventListener('pointermove', onMove, { passive: true });
+
+    const onUp = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 0) {
+        drag = null;
+        vp.classList.remove('dragging');
+        this._moved = moved;
+      } else if (pointers.size === 1) {
+        // lifted one finger of a pinch: continue as a pan from where we are
+        const [p] = [...pointers.values()];
+        drag = { x: p.x, y: p.y, px: this.pan.x, py: this.pan.y };
+      }
+    };
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+
+    // double-tap / double-click to zoom in, and again to fit
+    let lastTap = 0;
+    vp.addEventListener('pointerup', (e) => {
+      const now = performance.now();
+      if (now - lastTap < 320 && moved < 12) {
+        const r = vp.getBoundingClientRect();
+        const px = e.clientX - r.left;
+        const py = e.clientY - r.top;
+        const next = this.zoom > 1.6 ? 1 : 2.6;
+        const f = next / this.zoom;
+        if (next === 1) {
+          this.pan = { x: 0, y: 0 };
+        } else {
+          this.pan.x = px - (px - this.pan.x) * f;
+          this.pan.y = py - (py - this.pan.y) * f;
+        }
+        this.zoom = next;
+        this._applyTransform();
+        moved = 99;
+      }
+      lastTap = now;
     });
-    window.addEventListener('pointerup', () => {
-      drag = null;
-      vp.classList.remove('dragging');
-      this._moved = moved;
-    });
+
     vp.addEventListener('wheel', (e) => {
       e.preventDefault();
       // zoom around the cursor, so the structure you aim at stays under it
@@ -68,6 +144,7 @@ export class PlateView {
       this.zoom = next;
       this._applyTransform();
     }, { passive: false });
+
     vp.addEventListener('pointerleave', () => {
       if (this._hoverId) {
         this._hoverId = null;
@@ -77,6 +154,7 @@ export class PlateView {
     });
 
     this.canvas.addEventListener('pointerover', (e) => {
+      if (e.pointerType && e.pointerType !== 'mouse') return; // fingers tap, they do not hover
       const node = e.target.closest?.('[data-part]');
       const id = node?.dataset.part || null;
       if (id !== this._hoverId) {
@@ -97,7 +175,7 @@ export class PlateView {
       });
     });
     this.canvas.addEventListener('click', (e) => {
-      if (this._moved > 5) return; // that was a pan, not a pick
+      if (this._moved > 8) return; // that was a pan, not a pick
       const node = e.target.closest?.('[data-part]');
       if (!node) return;
       this.onSelect(node.dataset.part, { fromPlate: true });

@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070b14" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>HumanBody 3D — Learn the human body from Class 1 to PhD</title>
     <meta
       name="description"
@@ -122,6 +125,34 @@
         </div>
       </div>
 
+      <!-- MOBILE: a thumb-reachable tab bar that opens each panel as a sheet -->
+      <nav id="mobileBar" class="mobile-bar" aria-label="Sections">
+        <button class="mb-btn" data-sheet="left"><span>🫀</span>Layers</button>
+        <button class="mb-btn" data-sheet="tools"><span>🛠</span>Tools</button>
+        <button class="mb-btn" data-sheet="search"><span>🔎</span>Search</button>
+        <button class="mb-btn" data-sheet="right"><span>📖</span>Info</button>
+        <button class="mb-btn" data-sheet="more"><span>⋯</span>More</button>
+      </nav>
+      <div id="sheetScrim" class="sheet-scrim" hidden></div>
+
+      <div id="searchSheet" class="mobile-sheet" hidden>
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-title">Search the atlas</div>
+        <div id="searchSlot"></div>
+      </div>
+
+      <div id="moreSheet" class="mobile-sheet" hidden>
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <div class="sheet-title">More</div>
+        <div class="more-grid">
+          <button class="btn ghost" data-more="tour">🎒 Guided tour</button>
+          <button class="btn ghost" data-more="quiz">🎯 Quiz</button>
+          <button class="btn ghost" data-more="mode">🖼 2D plate</button>
+          <button class="btn ghost" data-more="reset">↺ Reset view</button>
+          <button class="btn ghost" data-more="help">? How to use</button>
+        </div>
+      </div>
+
       <div id="plateMeta" class="plate-meta" hidden></div>
 
       <div id="statusbar">
@@ -165,6 +196,8 @@
             <li>Pick a <b>complexion</b> and switch <b>♀ ↔ ♂</b> in the left rail: both change the model's shape, not just the label.</li>
             <li>Use <b>X-ray</b> to fade the skin, <b>Slice</b> to cut the body open, and <b>Micro view</b> (inside a part, at Undergraduate level or above) to zoom into cells and tissues.</li>
             <li>Press <b>🎯 Quiz</b> to test yourself and <b>🎒 Tour</b> for a guided lesson at your level.</li>
+            <li><b>On a phone or tablet:</b> one finger rotates the body, two fingers pinch to zoom and pan, and a tap studies a part.
+            The bar along the bottom opens Layers, Tools, Search, Info and More — swipe a sheet down to put it away.</li>
             <li>Shortcuts: <b>1–5</b> level · <b>P</b> 2D/3D · <b>/</b> search · <b>X</b> x-ray · <b>R</b> reset view · <b>Esc</b> close panels.</li>
           </ul>
           <p class="muted small">

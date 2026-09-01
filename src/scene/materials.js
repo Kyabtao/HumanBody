@@ -11,6 +11,7 @@
  * DOM the maps are simply skipped and the flat colour is used.
  */
 import * as THREE from 'three';
+import { deviceProfile } from './quality.js';
 
 const canMakeCanvas = typeof document !== 'undefined' && !!document.createElement('canvas').getContext;
 
@@ -61,9 +62,14 @@ const mapCache = new Map();
 
 /**
  * Skin map set for a tone: colour mottling + roughness + pore normal.
- * size 384 keeps generation around a frame of work on a laptop.
+ * The resolution follows the device profile so generation stays around a frame
+ * of work whether that frame belongs to a laptop or to a phone.
  */
-export function skinMaps(tone, size = 384) {
+export function skinMaps(tone, size = null) {
+  // Texture budget comes from the device profile: 768² of mottling and pores on
+  // a desktop, 256² on a low-end phone, where the maps are generated on the CPU
+  // and every extra pixel is a frame of jank at start-up.
+  if (size == null) size = canMakeCanvas ? deviceProfile().skinMapSize : 256;
   const key = `${tone.id}|${size}`;
   if (mapCache.has(key)) return mapCache.get(key);
   if (!canMakeCanvas) {
@@ -152,7 +158,7 @@ export function skinMaps(tone, size = 384) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(2, 2);
     t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    t.anisotropy = 4;
+    t.anisotropy = canMakeCanvas ? deviceProfile().anisotropy : 4;
     return t;
   };
   const maps = { map: tex(colorC, true), roughnessMap: tex(roughC, false), normalMap: tex(normC, false) };
@@ -184,20 +190,23 @@ export function skinMaterial(tone, opts = {}) {
   const maps = opts.noMaps ? {} : opts.retile ? retile(skinMaps(tone), ...opts.retile) : skinMaps(tone);
   const m = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(opts.tint || tone.base),
-    roughness: opts.roughness ?? 0.68,
+    roughness: opts.roughness ?? 0.62,
     metalness: 0,
     map: maps.map ?? null,
     roughnessMap: maps.roughnessMap ?? null,
     normalMap: maps.normalMap ?? null,
     normalScale: new THREE.Vector2(opts.normalScale ?? 0.55, opts.normalScale ?? 0.55),
-    clearcoat: opts.clearcoat ?? 0.16,
-    clearcoatRoughness: 0.62,
-    sheen: opts.soft ? 0.7 : 0.45,
+    clearcoat: opts.clearcoat ?? 0.2,
+    clearcoatRoughness: 0.58,
+    // the fine vellus hairs on skin scatter light at grazing angles: that soft
+    // rim of warmth around an arm is sheen, not a highlight
+    sheen: opts.soft ? 0.8 : 0.55,
     sheenColor: new THREE.Color('#ffb99e'),
-    sheenRoughness: 0.75,
-    specularIntensity: 0.42,
-    ior: 1.42,
-    envMapIntensity: 0.55,
+    sheenRoughness: 0.7,
+    specularIntensity: 0.5,
+    specularColor: new THREE.Color('#fff1e6'),
+    ior: 1.4,
+    envMapIntensity: 0.7,
     // thin, well-perfused areas (ears, nostrils, lips) glow faintly from the
     // blood inside them; an emissive hint is far cheaper than real transmission
     emissive: new THREE.Color(opts.soft ? '#6a2317' : '#000000'),
