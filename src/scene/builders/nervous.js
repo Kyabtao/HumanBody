@@ -107,24 +107,27 @@ export function buildNervous() {
 
   /* ---------------- special senses ---------------- */
   for (const s of [1, -1]) {
-    const eye = add(g, ellipsoidGeometry(0.021, 0.021, 0.021, 20), 'eye', 'nervous', EYE, { position: v3(s * 0.032, 0.786, 0.062) });
-    add(g, ellipsoidGeometry(0.011, 0.011, 0.008, 16), 'eye', 'nervous', '#8fb8d8', { position: v3(s * 0.032, 0.786, 0.082) });
-    add(g, ellipsoidGeometry(0.0055, 0.0055, 0.005, 12), 'eye', 'nervous', '#2b2b2b', { position: v3(s * 0.032, 0.786, 0.086) });
-    add(g, tubeGeometry([v3(s * 0.032, 0.786, 0.045), v3(s * 0.02, 0.79, 0.01)], 0.0035, 12, 6), 'eye', 'nervous', '#e8dfc0');
+    // the eyeball rides in the socket of the surface head loft, at the same
+    // height and side offset as the sclera/iris the skin builder draws
+    const eye = add(g, ellipsoidGeometry(0.019, 0.019, 0.019, 20), 'eye', 'nervous', EYE, { position: v3(s * 0.0335, 0.802, 0.048) });
+    add(g, ellipsoidGeometry(0.0092, 0.0092, 0.006, 16), 'eye', 'nervous', '#8fb8d8', { position: v3(s * 0.0335, 0.802, 0.0655) });
+    add(g, ellipsoidGeometry(0.0045, 0.0045, 0.004, 12), 'eye', 'nervous', '#2b2b2b', { position: v3(s * 0.0335, 0.802, 0.0692) });
+    add(g, tubeGeometry([v3(s * 0.0335, 0.802, 0.03), v3(s * 0.02, 0.806, -0.005)], 0.0035, 12, 6), 'eye', 'nervous', '#e8dfc0');
     // pinna
-    add(g, new THREE.TorusGeometry(0.019, 0.005, 8, 18, Math.PI * 1.5), 'ear', 'nervous', '#e0a882', {
-      position: v3(s * 0.093, 0.782, -0.006), rotation: [0, Math.PI / 2, s * 0.4], scale: [1, 1, 0.6],
+    // sits inside the surface ear, which spans x 0.076-0.084 at brow height
+    add(g, new THREE.TorusGeometry(0.014, 0.004, 8, 18, Math.PI * 1.5), 'ear', 'nervous', '#e0a882', {
+      position: v3(s * 0.0815, 0.796, -0.011), rotation: [0, Math.PI / 2, s * 0.4], scale: [1, 1, 0.55],
     });
     // cochlea hint
-    add(g, new THREE.TorusGeometry(0.008, 0.0025, 6, 14, Math.PI * 1.8), 'ear', 'nervous', '#d8c7e8', {
-      position: v3(s * 0.085, 0.775, -0.022), rotation: [1.2, 0.3, 0],
+    add(g, new THREE.TorusGeometry(0.007, 0.0022, 6, 14, Math.PI * 1.8), 'ear', 'nervous', '#d8c7e8', {
+      position: v3(s * 0.075, 0.79, -0.024), rotation: [1.2, 0.3, 0],
     });
   }
   // nose: bridge + tip + olfactory patch
-  add(g, tubeGeometry([v3(0, 0.79, 0.075), v3(0, 0.762, 0.092), v3(0, 0.742, 0.088)], 0.01, 16, 8), 'nose', 'nervous', '#e0a882');
-  add(g, ellipsoidGeometry(0.012, 0.008, 0.01, 10), 'nose', 'nervous', '#e0c9a0', { position: v3(0, 0.78, 0.055) });
+  add(g, tubeGeometry([v3(0, 0.818, 0.071), v3(0, 0.792, 0.084), v3(0, 0.772, 0.09)], 0.009, 16, 8), 'nose', 'nervous', '#e0a882');
+  add(g, ellipsoidGeometry(0.011, 0.007, 0.009, 10), 'nose', 'nervous', '#e0c9a0', { position: v3(0, 0.775, 0.058) });
   // tongue
-  const tongue = add(g, ellipsoidGeometry(0.03, 0.014, 0.045, 18), 'tongue', 'nervous', '#d4707a', { position: v3(0, 0.735, 0.045) });
+  const tongue = add(g, ellipsoidGeometry(0.03, 0.014, 0.045, 18), 'tongue', 'nervous', '#d4707a', { position: v3(0, 0.734, 0.048) });
   for (let i = 0; i < 8; i++) {
     add(g, blobGeometry(0.004, 0, 0, 4, i), 'tongue', 'nervous', '#e88b93', { position: v3((i % 4 - 1.5) * 0.012, 0.744, 0.03 + Math.floor(i / 4) * 0.018) });
   }

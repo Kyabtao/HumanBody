@@ -16,6 +16,7 @@ import { LEVELS, bestDetailFor } from '../src/data/levels.js';
 import { SYSTEMS } from '../src/data/systems.js';
 import { makeQuestions } from '../src/quiz.js';
 import { TOURS } from '../src/data/tours.js';
+import { buildPlate, plateLabels, plateToSVG } from '../src/atlas/plate.js';
 
 let problems = 0;
 const fail = (msg) => { console.log('  ✗ ' + msg); problems++; };
@@ -108,6 +109,42 @@ for (const [lvl, tour] of Object.entries(TOURS)) {
     if (step.systems) for (const s of step.systems) if (!SYSTEM_BY_ID[s]) fail(`tour ${lvl}: unknown system ${s}`);
   }
   console.log(`  · level ${lvl}: ${tour.steps.length} steps`);
+}
+
+console.log('\n🖼 2D plate');
+{
+  const allSystems = new Set(SYSTEMS.map((x) => x.id));
+  for (const variant of ['female', 'male']) {
+    const human = buildHumanoid(variant);
+    human.root.updateMatrixWorld(true);
+    for (const view of ['front', 'back', 'left']) {
+      const mk = (systems, level) => buildPlate(human, {
+        view,
+        isVisible: (m) => systems.has(m.userData.system) && (PART_BY_ID[m.userData.partId]?.minLevel ?? 1) <= level,
+      });
+      const flat = mk(new Set(['surface']), 1);
+      const deep = mk(allSystems, 5);
+      if (flat.regions.length < 20) fail(`${variant}/${view}: only ${flat.regions.length} surface regions projected`);
+      if (deep.regions.length < 120) fail(`${variant}/${view}: only ${deep.regions.length} regions with every system on`);
+      for (const r of deep.regions) {
+        if (!r.d || r.d.startsWith('M') === false || /NaN|Infinity|undefined/.test(r.d)) {
+          fail(`${variant}/${view}: broken path for part ${r.partId}`);
+          break;
+        }
+        if (!PART_BY_ID[r.partId]) { fail(`${variant}/${view}: region for unknown part ${r.partId}`); break; }
+        if (Math.abs(r.centroid[0]) > 0.45 || r.centroid[1] < -1.05 || r.centroid[1] > 1.1) {
+          fail(`${variant}/${view}: ${r.partId} projects outside the body`);
+          break;
+        }
+      }
+      const labels = plateLabels(deep, { systems: allSystems });
+      if (labels.length > 20) fail(`${variant}/${view}: ${labels.length} labels — the plate would be unreadable`);
+      if (labels.some((l) => !l.name)) fail(`${variant}/${view}: label without a name`);
+      const svg = plateToSVG(flat, { labels: plateLabels(flat, { systems: new Set(['surface']) }) });
+      if (/NaN|undefined/.test(svg) || svg.length < 2000) fail(`${variant}/${view}: broken SVG export`);
+    }
+  }
+  pass('every view projects a clean, labelled plate for both body types');
 }
 
 console.log(problems ? `\n❌ ${problems} problem(s) found\n` : '\n✅ All atlas checks passed\n');

@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node scripts/check.mjs",
-    "setup-pages": "mkdir -p .github/workflows && cp deploy/*.yml .github/workflows/ && echo \"GitHub Pages workflows installed in .github/workflows \u2014 commit and push them, then enable Pages \u2192 Source: GitHub Actions\""
+    "setup-pages": "mkdir -p .github/workflows && cp deploy/*.yml .github/workflows/ && echo \"GitHub Pages workflows installed in .github/workflows — commit and push them, then enable Pages → Source: GitHub Actions\"",
+    "plate": "node scripts/plate.mjs"
   },
   "dependencies": {
     "three": "^0.185.1"
