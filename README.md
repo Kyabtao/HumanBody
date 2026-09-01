@@ -57,7 +57,13 @@ npm run dev      # http://localhost:5173
 ```bash
 npm run build    # static site → dist/
 npm run preview  # serve the built site
+npm run check    # validate the atlas: content, 3D model, levels, quiz, tours
 ```
+
+`npm run check` is a headless self-test: it verifies that every entry has text for every level,
+that every mesh, tour step and search result resolves, that internal organs stay inside the body
+envelope, and that quizzes can be built at each level. It exits non-zero on failure, so it fits
+straight into CI.
 
 Requires Node 18+. The only runtime dependency is [three.js](https://threejs.org/).
 
