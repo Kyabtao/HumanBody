@@ -300,6 +300,7 @@ input[type='range'] { width: 130px; accent-color: var(--accent); }
   backdrop-filter: blur(4px);
   padding: 20px;
 }
+.modal[hidden] { display: none !important; }
 .modal-card {
   position: relative;
   width: min(620px, 94vw); max-height: 86vh; overflow: auto;
