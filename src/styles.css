@@ -23,6 +23,11 @@
 
 * { box-sizing: border-box; }
 
+/* Keep every programmatically hidden panel truly out of the layout. Some
+   component display rules (panel, tour-card) otherwise override the browser
+   default for the hidden attribute and create empty, unclosable overlays. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;

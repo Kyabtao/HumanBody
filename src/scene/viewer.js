@@ -16,6 +16,8 @@ export class Viewer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.VSMShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.localClippingEnabled = true;
@@ -80,8 +82,17 @@ export class Viewer {
     const hemi = new THREE.HemisphereLight(0xdfe9ff, 0x2a2f45, 1.15);
     this.scene.add(hemi);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.position.set(1.6, 2.2, 2.4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.near = 0.1;
+    key.shadow.camera.far = 8;
+    key.shadow.camera.left = -1.4;
+    key.shadow.camera.right = 1.4;
+    key.shadow.camera.top = 1.6;
+    key.shadow.camera.bottom = -1.2;
+    key.shadow.bias = -0.0002;
     this.scene.add(key);
 
     const fill = new THREE.DirectionalLight(0x9fc4ff, 0.55);
@@ -94,10 +105,11 @@ export class Viewer {
 
     // soft ground disc + a faint grid for spatial reference
     const discGeo = new THREE.CircleGeometry(1.05, 64);
-    const discMat = new THREE.MeshBasicMaterial({ color: 0x16b3c8, transparent: true, opacity: 0.12, depthWrite: false });
+    const discMat = new THREE.MeshStandardMaterial({ color: 0x123d4d, roughness: 0.88, metalness: 0.05, transparent: true, opacity: 0.22, depthWrite: false });
     const disc = new THREE.Mesh(discGeo, discMat);
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = -0.913;
+    disc.receiveShadow = true;
     this.scene.add(disc);
     this.groundDisc = disc;
 
@@ -495,10 +507,13 @@ export class Viewer {
       if (!m.visible) continue;
       if (m.userData.beating) {
         const s = 1 + beat;
-        m.scale.set(s, s * 1.02, s);
+        const base = m.userData.baseScale || new THREE.Vector3(1, 1, 1);
+        m.scale.set(base.x * s, base.y * s * 1.02, base.z * s);
       } else if (m.userData.breathing) {
-        m.scale.set(1 + breath * 0.04, 1 - breath * 0.16, 1 + breath * 0.05);
-        m.position.y = 0.14 - breath * 0.012;
+        const base = m.userData.baseScale || new THREE.Vector3(1, 1, 1);
+        const pos = m.userData.basePosition || m.position;
+        m.scale.set(base.x * (1 + breath * 0.04), base.y * (1 - breath * 0.16), base.z * (1 + breath * 0.05));
+        m.position.set(pos.x, pos.y - breath * 0.012, pos.z);
       }
     }
     // micro models drift slowly for a living feel
