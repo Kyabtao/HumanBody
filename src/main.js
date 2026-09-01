@@ -1,4 +1,6 @@
 import { Viewer } from './scene/viewer.js';
+import { PlateView } from './atlas/stage2d.js';
+import { SKIN_TONES } from './scene/anatomy.js';
 import { SYSTEMS, SYSTEM_BY_ID } from './data/systems.js';
 import { LEVELS, LEVEL_BY_ID, bestDetailFor } from './data/levels.js';
 import { ALL_PARTS, PART_BY_ID, ATLAS_STATS, partsForSystem, partsForLevel, searchParts } from './data/index.js';
@@ -37,9 +39,15 @@ const state = {
   tour: null,
   tourStep: 0,
   variant: 'female',
+  // '3d' = the rotating model · '2d' = the flat plate image projected from it
+  mode: '3d',
+  view: 'front',
+  plateLabels: true,
+  skin: 'light',
 };
 
 let viewer = null;
+let plate = null;
 let hoverEl = null;
 
 /* ==================================================================== */
@@ -62,21 +70,150 @@ function boot() {
     showWebGLNotice();
   }
   window.__viewer = viewer; // handy for debugging
+  viewer.onModelRebuilt = () => renderPlate();
 
   viewer.resize();
-  window.addEventListener('resize', () => viewer.resize());
+  window.addEventListener('resize', () => {
+    viewer.resize();
+    if (state.mode === '2d') renderPlate();
+  });
+
+  // the 2D plate is a second rendering of the same model, so it keeps every
+  // interaction: hover, click, system layers, x-ray and level gating
+  plate = new PlateView($('#plateStage'), {
+    onHover: (info) => handleHover(info),
+    onLeave: () => handleHover(null),
+    onSelect: (id) => showPart(id, { focus: false }),
+  });
 
   buildLevelSwitch();
   buildSystemList();
+  buildComplexion();
   renderParts();
   wireUI();
   updateStatus();
+  setMode('3d');
+  // with no WebGL there is nothing to spin — open the flat plate instead
+  if (viewer.fallback) setMode('2d');
   openHelpIfFirstVisit();
 
   requestAnimationFrame(() => {
     $('#loading').classList.add('hidden');
     setTimeout(() => $('#loading').remove(), 700);
   });
+}
+
+/* ==================================================================== */
+/*  3D ⇄ 2D                                                            */
+/* ==================================================================== */
+function setMode(mode) {
+  state.mode = mode;
+  document.body.classList.toggle('mode-2d', mode === '2d');
+  document.body.classList.toggle('mode-3d', mode !== '2d');
+  $$('#modeSwitch .mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#plateGroup').hidden = mode !== '2d';
+  $('#plateMeta').hidden = mode !== '2d';
+  $('#sliceGroup').hidden = mode === '2d' || !state.clip;
+  if (mode === '2d') {
+    renderPlate();
+    flashStatus('2D plate — drag to pan, scroll to zoom, click a region to study it. Press P for the 3D model.');
+  } else {
+    $('#statusText').textContent = 'Click any part of the body to learn about it.';
+  }
+  if (viewer.setPaused) viewer.setPaused(mode === '2d');
+}
+
+/** Re-project the model into the flat plate. Cheap enough to call on any change. */
+function renderPlate() {
+  if (state.mode !== '2d' || !plate || !viewer) return;
+  const ms = plate.render(viewer.human, {
+    view: state.view,
+    systems: state.visible,
+    level: state.level,
+    isolate: viewer.isolateSystem,
+    xray: state.xray,
+    labels: state.plateLabels,
+    selected: state.selectedPartId,
+  });
+  const meta = $('#plateMeta');
+  if (meta) {
+    const n = plate.plate ? plate.plate.regions.length : 0;
+    meta.innerHTML = `<b>${plate.plate ? plate.plate.view : ''}</b> · ${n} regions · ${ms} ms · projected from the 3D model`;
+  }
+}
+
+function togglePlateLabels() {
+  state.plateLabels = !state.plateLabels;
+  $('#btnPlateLabels').classList.toggle('active', state.plateLabels);
+  renderPlate();
+}
+
+function savePlate(kind) {
+  if (!plate || !plate.plate) return;
+  const sys = [...state.visible].map((id) => SYSTEM_BY_ID[id]?.name).filter(Boolean).join(' · ');
+  const caption = `${LEVEL_BY_ID[state.level].short} — ${sys || 'all systems'}`;
+  if (kind === 'svg') {
+    const svg = plate.toSVGString({ title: `HumanBody · ${plate.plate.view} plate`, subtitle: caption });
+    downloadText(svg, `humanbody-plate-${state.view}.svg`, 'image/svg+xml');
+    flashStatus('Plate saved as an SVG image — it stays sharp at any size, from a phone to a poster.');
+    return;
+  }
+  flashStatus('Rendering the plate to a PNG image…');
+  plate.toPNG(2).then((blob) => {
+    if (!blob) return flashStatus('Could not rasterise the plate in this browser — try the SVG instead.');
+    downloadBlob(blob, `humanbody-plate-${state.view}.png`);
+    flashStatus('Plate saved as a PNG image.');
+  });
+}
+
+function downloadText(text, name, mime) {
+  downloadBlob(new Blob([text], { type: mime }), name);
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** Complexion picker: the figure's skin, hair and lip tones. */
+function buildComplexion() {
+  const host = $('#complexion');
+  if (!host) return;
+  host.innerHTML = SKIN_TONES.map((t) => `<button class="tone${t.id === state.skin ? ' active' : ''}" data-skin="${t.id}" title="${t.name}" aria-label="${t.name}" style="background:${t.base}"></button>`).join('')
+    + `<button class="chip tiny" id="btnVariant2" title="Switch the body type">${state.variant === 'female' ? '♀ body' : '♂ body'}</button>`;
+  host.querySelectorAll('[data-skin]').forEach((b) => {
+    b.onclick = () => {
+      state.skin = b.dataset.skin;
+      if (viewer.setSkin) viewer.setSkin(state.skin);
+      buildComplexion();
+      renderPlate();
+      const tone = SKIN_TONES.find((t) => t.id === state.skin);
+      flashStatus(`Complexion set to ${tone.name.toLowerCase()}.`);
+    };
+  });
+  const vb = host.querySelector('#btnVariant2');
+  if (vb) vb.onclick = () => setVariant();
+}
+
+function setVariant() {
+  state.variant = state.variant === 'female' ? 'male' : 'female';
+  viewer.setVariant(state.variant);
+  buildSystemList();
+  buildComplexion();
+  renderParts();
+  renderPlate();
+  if (state.selectedPartId) showPart(state.selectedPartId, { focus: false });
+  flashStatus(
+    state.variant === 'female'
+      ? 'Female figure: narrower shoulders, wider pelvis, bust, longer hair.'
+      : 'Male figure: broader shoulders and jaw, straighter trunk, shorter hair.'
+  );
 }
 
 /* ==================================================================== */
@@ -105,6 +242,7 @@ function setLevel(level) {
   buildSystemList();
   renderParts();
   if (state.selectedPartId) showPart(state.selectedPartId, { focus: false });
+  renderPlate();
   updateStatus();
   const lv = LEVEL_BY_ID[level];
   flashStatus(`Level set to ${lv.title} — ${lv.subtitle}. ${lv.blurb}`);
@@ -129,18 +267,14 @@ function buildSystemList() {
       ${sys.id === 'reproductive' ? `<button class="iso" data-variant="1" title="Switch between female and male anatomy">${state.variant === 'female' ? '♀→♂' : '♂→♀'}</button>` : ''}`;
     row.onclick = (e) => {
       if (e.target.dataset.variant) {
-        state.variant = state.variant === 'female' ? 'male' : 'female';
-        viewer.setVariant(state.variant);
-        buildSystemList();
-        renderParts();
-        if (state.selectedPartId) showPart(state.selectedPartId, { focus: true });
-        flashStatus(`Reproductive anatomy: ${state.variant === 'female' ? 'female' : 'male'}.`);
+        setVariant();
         return;
       }
       if (e.target.classList.contains('iso')) {
         viewer.setIsolate(sys.id);
         state.visible = new Set([sys.id]);
         buildSystemList();
+        renderPlate();
         return;
       }
       if (e.target.classList.contains('dot')) {
@@ -166,6 +300,7 @@ function toggleSystem(id) {
   else state.visible.delete(id);
   buildSystemList();
   renderParts();
+  renderPlate();
 }
 
 /* ==================================================================== */
@@ -201,6 +336,26 @@ function showPart(partId, { focus = false, from3d = false } = {}) {
   renderParts();
   renderDetails(part);
   $('#rightPanel').hidden = false;
+
+  if (state.mode === '2d') {
+    // the plate is a projection of the model, so a part that is not drawn here
+    // means its layer is off: turn it on and re-project rather than failing
+    const drawn = plate.plate && plate.plate.regions.some((r) => r.partId === partId);
+    if (!drawn) {
+      if (part.system !== 'micro' && !state.visible.has(part.system)) {
+        state.visible.add(part.system);
+        viewer.setSystems([...state.visible]);
+        buildSystemList();
+        renderParts();
+      }
+      renderPlate();
+      if (focus) plate.zoomToPart(partId);
+    } else {
+      plate.setSelected(partId);
+      if (focus) plate.zoomToPart(partId);
+    }
+    return;
+  }
 
   const meshes = viewer.human.byPart.get(partId) || [];
   const visibleNow = meshes.filter((m) => viewer.isMeshVisible(m));
@@ -295,6 +450,7 @@ function renderDetails(part) {
 }
 
 function enterMicro(partId) {
+  if (state.mode === '2d') setMode('3d'); // cells live in the 3D world
   const ok = viewer.enterMicro(partId);
   if (ok) {
     $('#rightPanel').hidden = false;
@@ -314,10 +470,17 @@ function handleHover(info) {
     return;
   }
   $('#scene').classList.add('hovering');
-  const p = info.point.clone().project(viewer.camera);
-  const rect = viewer.canvas.getBoundingClientRect();
-  const x = (p.x * 0.5 + 0.5) * rect.width;
-  const y = (-p.y * 0.5 + 0.5) * rect.height;
+  let x;
+  let y;
+  if (info.screen) {
+    x = info.screen.x;
+    y = info.screen.y;
+  } else if (info.point && viewer.camera) {
+    const p = info.point.clone().project(viewer.camera);
+    const rect = viewer.canvas.getBoundingClientRect();
+    x = (p.x * 0.5 + 0.5) * rect.width;
+    y = (-p.y * 0.5 + 0.5) * rect.height;
+  } else return;
   hoverEl.hidden = false;
   hoverEl.style.left = `${x}px`;
   hoverEl.style.top = `${y}px`;
@@ -465,6 +628,11 @@ function renderQuiz() {
 /* ==================================================================== */
 /*  Tour                                                                */
 /* ==================================================================== */
+/** The plate has no top/bottom view — keep the tour readable in 2D. */
+function plateHasView(view) {
+  return ['front', 'back', 'left', 'right'].includes(view);
+}
+
 function openTour() {
   const tour = TOURS[state.level];
   if (!tour) return;
@@ -489,11 +657,16 @@ function renderTour() {
     viewer.setSystems(step.systems);
     buildSystemList();
     renderParts();
+    renderPlate(); // the 2D plate follows the tour too, layer by layer
   }
-  if (step.view) viewer.setView(step.view);
+  if (step.view) {
+    if (state.mode === '2d' && !plateHasView(step.view)) step.view = 'front';
+    state.view = step.view;
+    viewer.setView(step.view);
+  }
   if (step.partId) {
     if (step.micro && state.level >= 4) {
-      setTimeout(() => viewer.enterMicro(step.partId), 350);
+      setTimeout(() => enterMicro(step.partId), 350);
     } else if (viewer.microMode) {
       viewer.exitMicro();
       setTimeout(() => showPart(step.partId, { focus: true }), 380);
@@ -521,26 +694,54 @@ function updateStatus() {
 }
 
 function wireUI() {
-  // toolbar: views
+  // toolbar: views (drive both the camera and the plate)
   $$('#viewGroup [data-view]').forEach((b) => {
     b.onclick = () => {
+      state.view = b.dataset.view;
       if (viewer.microMode) viewer.exitMicro();
-      viewer.setView(b.dataset.view);
-      $$('#viewGroup [data-view]').forEach((x) => x.classList.toggle('active', x === b));
+      if (state.mode === '2d') {
+        if (state.view === 'top') state.view = 'front'; // the plate has no top view
+        plate.resetView();
+        renderPlate();
+      } else {
+        viewer.setView(b.dataset.view);
+      }
+      $$('#viewGroup [data-view]').forEach((x) => x.classList.toggle('active', x.dataset.view === state.view));
     };
   });
   $$('#toolbar [data-focus]').forEach((b) => {
     b.onclick = () => {
       const f = b.dataset.focus;
-      if (f === 'reset') { viewer.exitMicro(); viewer.resetView(); }
-      else viewer.setView(f);
+      if (f === 'reset') {
+        viewer.exitMicro();
+        viewer.resetView();
+        if (plate) plate.resetView();
+      } else if (f === 'head' || f === 'torso' || f === 'legs') {
+        if (state.mode === '2d') {
+          plate.zoomToPart(f === 'head' ? 'head' : f === 'torso' ? 'chest' : 'thigh');
+          renderPlate();
+        } else viewer.setView(f);
+      } else viewer.setView(f);
     };
   });
+
+  // 3D ↔ 2D and the plate tools
+  $$('#modeSwitch .mode-btn').forEach((b) => {
+    b.onclick = () => setMode(b.dataset.mode);
+  });
+  $('#btnPlateLabels').onclick = () => togglePlateLabels();
+  $('#btnPlateFit').onclick = () => {
+    plate.resetView();
+    flashStatus('Plate fitted to the window.');
+  };
+  $('#btnPlateSVG').onclick = () => savePlate('svg');
+  $('#btnPlatePNG').onclick = () => savePlate('png');
 
   $('#btnXray').onclick = (e) => {
     state.xray = !state.xray;
     viewer.setXray(state.xray);
     e.currentTarget.classList.toggle('active', state.xray);
+    renderPlate();
     flashStatus(state.xray ? 'X-ray on: the skin is now see-through.' : 'X-ray off.');
   };
   $('#btnRotate').onclick = (e) => {
@@ -565,6 +766,7 @@ function wireUI() {
     viewer.setSystems([...state.visible]);
     buildSystemList();
     renderParts();
+    renderPlate();
   };
   $('#partsTitle').onclick = () => {
     state.activeSystem = null;
@@ -577,10 +779,12 @@ function wireUI() {
     viewer.setSystems([]);
     buildSystemList();
     renderParts();
+    renderPlate();
   };
   $('#btnCloseDetails').onclick = () => {
     $('#rightPanel').hidden = true;
     viewer.selectPart(null);
+    if (plate) plate.setSelected(null);
     state.selectedPartId = null;
     renderParts();
   };
@@ -613,6 +817,8 @@ function wireUI() {
     if (e.key >= '1' && e.key <= '5') setLevel(Number(e.key));
     if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
     if (e.key.toLowerCase() === 'x') $('#btnXray').click();
+    if (e.key.toLowerCase() === 'p') setMode(state.mode === '3d' ? '2d' : '3d');
+    if (e.key.toLowerCase() === 'l' && state.mode === '2d') togglePlateLabels();
     if (e.key.toLowerCase() === 'r') { viewer.exitMicro(); viewer.resetView(); }
     if (e.key === 'Escape') {
       $('#quizModal').hidden = true;
@@ -656,7 +862,8 @@ function createFallbackViewer(canvas) {
     setIsolate: noop, setOpacity: noop, setXray: noop, setClipping: noop,
     setAutoRotate: noop, focusPart: () => false, focusSystem: noop, setView: noop,
     resetView: noop, selectPart: noop, enterMicro: () => false, exitMicro: noop,
-    refreshVisibility: noop, setVariant: noop,
+    refreshVisibility: noop, setVariant: noop, setPaused: noop, setSkin: noop,
+    isolateSystem: null,
   };
 }
 

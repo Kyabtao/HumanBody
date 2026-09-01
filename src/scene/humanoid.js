@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildSurface, buildIntegumentary } from './builders/surface.js';
+import { DEFAULT_TONE } from './anatomy.js';
 import { buildSkeletal } from './builders/skeletal.js';
 import { buildMuscular } from './builders/muscular.js';
 import { buildNervous } from './builders/nervous.js';
@@ -96,13 +97,18 @@ function reindex(human) {
   human.allMeshes = allMeshes;
 }
 
-export function buildHumanoid(reproductiveVariant = 'female') {
+/**
+ * The figure. `variant` drives the body-type tables (shoulder/hip ratio,
+ * muscle bulk, bust, jaw, hair length) as well as the reproductive anatomy,
+ * and `skin` picks the complexion used by the skin material.
+ */
+export function buildHumanoid(reproductiveVariant = 'female', { skin = DEFAULT_TONE } = {}) {
   const root = new THREE.Group();
   root.name = 'human-body';
 
   const systems = {
-    integumentary: buildIntegumentary(),
-    surface: buildSurface(),
+    integumentary: buildIntegumentary({ variant: reproductiveVariant, skin }),
+    surface: buildSurface({ variant: reproductiveVariant, skin }),
     skeletal: buildSkeletal(),
     muscular: buildMuscular(),
     nervous: buildNervous(),
@@ -150,19 +156,43 @@ export function buildHumanoid(reproductiveVariant = 'female') {
 
   Object.assign(human, { microModels, resolveMicroModel });
 
-  /** Swap the reproductive anatomy (female ↔ male) without rebuilding the body. */
-  human.setVariant = (variant) => {
-    const old = systems.reproductive;
-    const next = buildReproductive(variant);
+  /** Replace one layer in place and re-index the picking maps. */
+  const relayer = (key, build) => {
+    const prev = systems[key];
+    const next = build();
+    if (prev.parent) next.position.copy(prev.position);
     root.add(next);
-    root.remove(old);
-    old.traverse((o) => {
-      if (o.isMesh) o.geometry.dispose();
+    root.remove(prev);
+    prev.traverse((o) => {
+      if (o.isMesh && o.geometry) o.geometry.dispose();
     });
-    systems.reproductive = next;
+    systems[key] = next;
+  };
+
+  /**
+   * Female ↔ male: the reproductive organs change, and so does the whole
+   * figure, because the two body types differ in shoulder, waist, hip, jaw
+   * and hair as well as in gonads.
+   */
+  human.setVariant = (variant) => {
+    human.variant = variant;
+    relayer('reproductive', () => buildReproductive(variant));
+    relayer('surface', () => buildSurface({ variant, skin: human.skin }));
+    relayer('integumentary', () => buildIntegumentary({ variant, skin: human.skin }));
     reindex(human);
     return human;
   };
+
+  /** Complexion: rebuilds the skin and the hair tone that goes with it. */
+  human.setSkin = (skin) => {
+    human.skin = skin;
+    relayer('surface', () => buildSurface({ variant: human.variant, skin }));
+    relayer('integumentary', () => buildIntegumentary({ variant: human.variant, skin }));
+    reindex(human);
+    return human;
+  };
+  human.variant = reproductiveVariant;
+  human.skin = skin;
 
   return human;
 }

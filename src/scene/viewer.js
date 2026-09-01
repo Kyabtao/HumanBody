@@ -1,11 +1,29 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildHumanoid } from './humanoid.js';
 import { PART_BY_ID } from '../data/index.js';
 import { SYSTEM_BY_ID } from '../data/systems.js';
 
 const TMP_BOX = new THREE.Box3();
 const TMP_VEC = new THREE.Vector3();
+
+/** A radial falloff used as the ground contact shadow. */
+function softShadowTexture() {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(2,6,12,0.85)');
+  grad.addColorStop(0.55, 'rgba(2,6,12,0.35)');
+  grad.addColorStop(1, 'rgba(2,6,12,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 export class Viewer {
   constructor(canvas, { onHover, onSelect } = {}) {
@@ -18,8 +36,9 @@ export class Viewer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.VSMShadowMap;
+    // filmic tone mapping: skin highlights roll off instead of clipping to white
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.02;
     this.renderer.localClippingEnabled = true;
 
     this.scene = new THREE.Scene();
@@ -38,7 +57,7 @@ export class Viewer {
 
     this._buildEnvironment();
 
-    const human = buildHumanoid('female');
+    const human = buildHumanoid('female', { skin: 'light' });
     this.human = human;
     this.scene.add(human.root);
     this.scene.add(human.microRoot);
@@ -72,17 +91,35 @@ export class Viewer {
 
     this.clock = new THREE.Clock();
     this._animating = true;
+    this._running = false;
+    this._paused = false;
     this._cameraTween = null;
     this._loop = this._loop.bind(this);
     requestAnimationFrame(this._loop);
   }
 
-  /* ------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------ *
+   * Studio lighting. A body is mostly skin, and skin is a dielectric: it
+   * needs something to reflect, so the scene is lit by an image-based
+   * environment (a softbox room) plus a key/fill/rim setup, and it stands on
+   * a shadow catcher rather than floating in space.
+   * ------------------------------------------------------------------ */
   _buildEnvironment() {
-    const hemi = new THREE.HemisphereLight(0xdfe9ff, 0x2a2f45, 1.15);
+    // image-based lighting: gives skin its soft gradient reflections
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.06).texture;
+      this.scene.environment = this.envTexture;
+      this.scene.environmentIntensity = 0.5;
+      pmrem.dispose();
+    } catch (err) {
+      console.warn('environment map unavailable:', err);
+    }
+
+    const hemi = new THREE.HemisphereLight(0xdfe9ff, 0x2a2f45, 0.75);
     this.scene.add(hemi);
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.0);
+    const key = new THREE.DirectionalLight(0xfff3e6, 2.15);
     key.position.set(1.6, 2.2, 2.4);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -93,14 +130,18 @@ export class Viewer {
     key.shadow.camera.top = 1.6;
     key.shadow.camera.bottom = -1.2;
     key.shadow.bias = -0.0002;
+    key.shadow.radius = 5;
     this.scene.add(key);
+    this.key = key;
 
-    const fill = new THREE.DirectionalLight(0x9fc4ff, 0.55);
+    // cool fill from the opposite side, so the shadowed flank stays readable
+    const fill = new THREE.DirectionalLight(0x9fc4ff, 0.5);
     fill.position.set(-2.2, 0.6, 1.2);
     this.scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xffd9b0, 0.7);
-    rim.position.set(-0.6, 1.0, -2.4);
+    // rim from behind: separates shoulders, hair and calves from the backdrop
+    const rim = new THREE.DirectionalLight(0xffd9b0, 0.95);
+    rim.position.set(-0.6, 1.05, -2.4);
     this.scene.add(rim);
 
     // soft ground disc + a faint grid for spatial reference
@@ -113,10 +154,21 @@ export class Viewer {
     this.scene.add(disc);
     this.groundDisc = disc;
 
+    // contact shadow: the dark pool where the feet meet the floor
+    const pool = new THREE.Mesh(
+      new THREE.CircleGeometry(0.5, 48),
+      new THREE.MeshBasicMaterial({ map: softShadowTexture(), transparent: true, opacity: 0.5, depthWrite: false })
+    );
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.y = -0.899;
+    pool.scale.set(1, 0.62, 1);
+    this.scene.add(pool);
+    this.contactShadow = pool;
+
     const grid = new THREE.PolarGridHelper(1.0, 8, 6, 64, 0x2a6f80, 0x1d4d5a);
     grid.position.y = -0.910;
     grid.material.transparent = true;
-    grid.material.opacity = 0.35;
+    grid.material.opacity = 0.3;
     this.scene.add(grid);
     this.grid = grid;
   }
@@ -467,11 +519,33 @@ export class Viewer {
     // nothing heavy; kept for hooks
   }
 
-  /** Female ↔ male reproductive anatomy. */
+  /** Female ↔ male: reproductive anatomy plus the whole body type. */
   setVariant(variant) {
+    this._setHovered(null);
+    this.selectedMeshes = [];
     this.human.setVariant(variant);
     this.refreshVisibility();
     if (this.selectedPartId) this.selectPart(this.selectedPartId);
+    if (this.onModelRebuilt) this.onModelRebuilt();
+  }
+
+  /** Complexion of the figure (skin, hair and lip tones follow it). */
+  setSkin(toneId) {
+    this.human.setSkin(toneId);
+    this._setHovered(null);
+    this.selectedMeshes = [];
+    this.refreshVisibility();
+    if (this.selectedPartId) this.selectPart(this.selectedPartId);
+    if (this.onSkinChange) this.onSkinChange(toneId);
+  }
+
+  /** Stop rendering while another view (the 2D plate) is on screen. */
+  setPaused(on) {
+    this._paused = on;
+    if (!on && this._animating && !this._running) {
+      this._running = true;
+      requestAnimationFrame(this._loop);
+    }
   }
 
   setAutoRotate(on) {
@@ -487,8 +561,17 @@ export class Viewer {
   _loop() {
     if (!this._animating) return;
     requestAnimationFrame(this._loop);
+    if (this._paused) return;
     const t = this.clock.getElapsedTime();
     const dt = Math.min(0.05, this.clock.getDelta());
+    this._running = true;
+
+    // a standing body is never perfectly still: weight shifts, breath moves
+    if (!this.microMode && !this.clipping && !this.autoRotate) {
+      this.human.root.rotation.y = Math.sin(t * 0.31) * 0.022;
+      this.human.root.position.y = Math.sin(t * 0.62 + 0.7) * 0.0035;
+      this.human.root.rotation.z = Math.sin(t * 0.21) * 0.004;
+    }
 
     // camera tween
     if (this._cameraTween) {

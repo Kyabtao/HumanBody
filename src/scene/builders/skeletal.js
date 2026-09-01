@@ -16,7 +16,8 @@ export function buildSkeletal() {
   const skull = add(g, ellipsoidGeometry(0.093, 0.115, 0.1, 28), 'skull', 'skeletal', BONE, {
     position: v3(0, 0.795, -0.005),
   });
-  skull.geometry.scale(1, 1.08, 1.02);
+  // scaled to stay just inside the skin: the head loft is 0.088 wide at its widest
+  skull.geometry.scale(0.955, 1.05, 1.0);
   // face / maxilla block
   add(g, ellipsoidGeometry(0.062, 0.055, 0.062, 20), 'skull', 'skeletal', BONE, {
     position: v3(0, 0.742, 0.045),
