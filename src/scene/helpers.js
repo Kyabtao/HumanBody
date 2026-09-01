@@ -63,7 +63,8 @@ const materialCache = new Map();
 export function material(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   if (materialCache.has(key)) return materialCache.get(key);
-  const m = new THREE.MeshStandardMaterial({
+  const Material = opts.physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
+  const m = new Material({
     color: new THREE.Color(color),
     roughness: opts.roughness ?? 0.62,
     metalness: opts.metalness ?? 0.05,
@@ -74,6 +75,13 @@ export function material(color, opts = {}) {
     emissive: new THREE.Color(opts.emissive ?? 0x000000),
     emissiveIntensity: opts.emissiveIntensity ?? 1,
     flatShading: opts.flatShading ?? false,
+    ...(opts.physical ? {
+      clearcoat: opts.clearcoat ?? 0,
+      clearcoatRoughness: opts.clearcoatRoughness ?? 0.35,
+      sheen: opts.sheen ?? 0,
+      sheenColor: new THREE.Color(opts.sheenColor ?? 0x000000),
+      sheenRoughness: opts.sheenRoughness ?? 0.5,
+    } : {}),
   });
   materialCache.set(key, m);
   return m;
@@ -210,6 +218,9 @@ export function add(group, geometry, partId, system, matOrColor, opts = {}) {
     pickable: opts.pickable ?? true,
     baseMaterial: m,
     isHighlightable: opts.isHighlightable ?? true,
+    // Preserve authored transforms so animation never drifts the anatomy.
+    basePosition: mesh.position.clone(),
+    baseScale: mesh.scale.clone(),
   };
   group.add(mesh);
   return mesh;
