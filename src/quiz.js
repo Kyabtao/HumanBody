@@ -45,10 +45,17 @@ function distractors(part, pool, n) {
   return out.slice(0, n);
 }
 
-/** Build a question set for the given level (and optionally one system). */
-export function makeQuestions({ level = 2, systemId = null, count = 8 } = {}) {
+/**
+ * Build a question set for the given level, optionally narrowed to one system
+ * or to one node of the body-part tree (`partIds`).
+ */
+export function makeQuestions({ level = 2, systemId = null, partIds = null, count = 8 } = {}) {
   let pool = partsForLevel(level);
-  if (systemId) {
+  if (partIds) {
+    const wanted = partIds instanceof Set ? partIds : new Set(partIds);
+    const scoped = pool.filter((p) => wanted.has(p.id));
+    if (scoped.length >= 4) pool = scoped;
+  } else if (systemId) {
     const scoped = pool.filter((p) => p.system === systemId);
     if (scoped.length >= 4) pool = scoped;
   }

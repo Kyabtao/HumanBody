@@ -9,6 +9,8 @@ import { makeQuestions } from './quiz.js';
 import { buildHumanoid } from './scene/humanoid.js';
 import { TOURS } from './data/tours.js';
 import { MobileShell } from './mobile.js';
+import { PartTree, nodeTitle } from './tree.js';
+import { buildTree, partIdsUnder, pathToPart, trailLabel, TREE_REGIONS } from './data/tree.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -49,12 +51,17 @@ const state = {
   plateStyle: 'reference',
   plateLabels: true,
   skin: 'light',
+  // 'tree' = the regional body-part tree · 'list' = one flat list
+  browse: 'tree',
+  // the region or branch whose layers were last lit up from the tree
+  treeNode: null,
 };
 
 let viewer = null;
 let plate = null;
 let hoverEl = null;
 let mobile = null;
+let partTree = null;
 
 /* ==================================================================== */
 /*  Boot                                                                */
@@ -78,9 +85,13 @@ function boot() {
   window.__viewer = viewer; // handy for debugging
   viewer.onModelRebuilt = () => {
     renderPlate();
+    queueTreeRefresh(); // which parts can be zoomed to changes with the model
     if (state.selectedPartId) renderDetails(PART_BY_ID[state.selectedPartId]);
   };
-  viewer.onClinicalStatus = (event) => updateClinicalBadge(event);
+  viewer.onClinicalStatus = (event) => {
+    updateClinicalBadge(event);
+    queueTreeRefresh();
+  };
 
   viewer.resize();
   // Phones fire resize on every scroll of the URL bar and on rotation; coalesce
@@ -124,7 +135,9 @@ function boot() {
   buildLevelSwitch();
   buildSystemList();
   buildComplexion();
+  buildPartTree();
   renderParts();
+  setBrowse('tree');
   wireUI();
   updateStatus();
   updateClinicalBadge();
@@ -398,7 +411,9 @@ function toggleSystem(id) {
 function renderParts() {
   const list = $('#partList');
   const sys = state.activeSystem ? SYSTEM_BY_ID[state.activeSystem] : null;
-  $('#partsTitle').textContent = sys ? sys.name : 'All parts';
+  $('#partsTitle').textContent = state.browse === 'tree'
+    ? (state.treeNode ? nodeTitle(state.treeNode) : 'Body Part Tree')
+    : (sys ? sys.name : 'All parts');
   let parts = sys ? partsForSystem(sys.id) : partsForLevel(state.level);
   parts = parts.filter((p) => (p.minLevel ?? 1) <= state.level);
   $('#partsCount').textContent = `${parts.length}`;
@@ -412,6 +427,105 @@ function renderParts() {
     el.onclick = () => showPart(p.id, { focus: true });
     list.appendChild(el);
   }
+  renderTree();
+}
+
+/* ==================================================================== */
+/*  Body-part tree: region → branch → part                             */
+/* ==================================================================== */
+/** Whether a part can be pointed at on screen right now (either 3D source). */
+function partIsVisible(partId) {
+  if (!viewer) return false;
+  if (viewer.hasVisibleReferencePart?.(partId)) return true;
+  return (viewer.human?.byPart.get(partId) || []).some((m) => viewer.isMeshVisible(m));
+}
+
+function buildPartTree() {
+  partTree = new PartTree($('#partTree'), {
+    onSelect: (id) => showPart(id, { focus: true }),
+    onZoom: (id) => focusPartInView(id),
+    onShowLayers: (nodeId) => showTreeNode(nodeId),
+    onQuizNode: (nodeId) => openQuiz({ nodeId }),
+    isPartVisible: partIsVisible,
+    // the tree and the filter box above it are one control, so keep them in step
+    onFilterChange: (value) => { const input = $('#treeFilter'); if (input) input.value = value; },
+  });
+}
+
+/** A clinical layer arriving mid-read should not flicker the rail, so coalesce. */
+let treeRefreshFrame = 0;
+function queueTreeRefresh() {
+  if (!partTree || treeRefreshFrame) return;
+  treeRefreshFrame = requestAnimationFrame(() => {
+    treeRefreshFrame = 0;
+    renderTree();
+  });
+}
+
+function renderTree() {
+  if (!partTree) return;
+  const tree = buildTree({ level: state.level });
+  const open = tree.reduce((n, r) => n + r.count, 0);
+  const total = tree.reduce((n, r) => n + r.count + r.lockedCount, 0);
+  if (state.browse === 'tree') $('#partsCount').textContent = `${open}/${total}`;
+  partTree.refresh({ level: state.level, selectedPartId: state.selectedPartId });
+}
+
+/** Switch the parts rail between the regional tree and the flat list. */
+function setBrowse(mode) {
+  state.browse = mode === 'list' ? 'list' : 'tree';
+  const tree = state.browse === 'tree';
+  $$('#browseSwitch .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.browse === state.browse));
+  $('#partTree').hidden = !tree;
+  $('#treeBar').hidden = !tree;
+  $('#partList').hidden = tree;
+  renderParts();
+  if (tree && state.selectedPartId) partTree.reveal(state.selectedPartId);
+}
+
+/** Light up only the layers a branch or region needs, and frame it. */
+function showTreeNode(nodeId, { focus = true } = {}) {
+  const parts = partIdsUnder(nodeId)
+    .map((id) => PART_BY_ID[id])
+    .filter((p) => p && (p.minLevel ?? 1) <= state.level);
+  if (!parts.length) {
+    flashStatus('Nothing in that branch is unlocked at this level yet — raise the level to see it.');
+    return;
+  }
+  const systems = [...new Set(parts.map((p) => p.system))];
+  state.treeNode = nodeId;
+  state.activeSystem = null;
+  state.visible = new Set(systems);
+  viewer.setIsolate(null);
+  viewer.setSystems(systems);
+  buildSystemList();
+  renderParts();
+  if (focus) {
+    if (state.mode === '3d') viewer.focusParts(parts.map((p) => p.id));
+    else if (plate) plate.resetView();
+    renderPlate();
+  }
+  const names = systems.map((s) => `${SYSTEM_BY_ID[s].icon || ''}${SYSTEM_BY_ID[s].name}`).join(' · ');
+  flashStatus(`${nodeTitle(nodeId)}: ${parts.length} parts to check · layers on — ${names}.`);
+}
+
+/** Point the camera (or the flat plate) at one part, whichever mode is open. */
+function focusPartInView(partId) {
+  if (state.mode === '2d' && plate) {
+    const drawn = plate.plate && plate.plate.regions.some((r) => r.partId === partId);
+    if (!drawn) {
+      flashStatus('That part is not drawn on this plate — switch the layer on, or use the interactive overlay.');
+      return false;
+    }
+    plate.setSelected(partId);
+    plate.zoomToPart(partId);
+    return true;
+  }
+  if (viewer.focusParts?.([partId])) return true;
+  if (viewer.focusPart?.(partId)) return true;
+  if (viewer.human?.resolveMicroModel?.(partId) && state.level >= 4) enterMicro(partId);
+  flashStatus('No 3D shape for that entry at this level — the description is still in the panel.');
+  return false;
 }
 
 /* ==================================================================== */
@@ -424,6 +538,8 @@ function showPart(partId, { focus = false, from3d = false } = {}) {
   viewer.selectPart(partId);
   renderParts();
   renderDetails(part);
+  // walk the regional tree to this part so the rail always says where it lives
+  partTree?.reveal(partId);
   $('#rightPanel').hidden = false;
   // on a phone the details live in a sheet: bring it up when a part is picked
   if (mobile) mobile.revealDetails();
@@ -495,11 +611,32 @@ function renderDetails(part) {
         </div></div>`
     : '';
 
+  // the rest of the branch this part sits in — the "check it part by part" trail
+  const trail = pathToPart(part.id);
+  const leafNode = trail[trail.length - 1];
+  const siblings = leafNode
+    ? partIdsUnder(leafNode.id)
+      .map((id) => PART_BY_ID[id])
+      .filter((p) => p && p.id !== part.id)
+    : [];
+  const trailHtml = trail.length
+    ? `<div class="d-trail"><span aria-hidden="true">🌳</span>${trail
+        .map((n, i) => `${i ? '<span class="sep" aria-hidden="true">›</span>' : ''}<button data-trail="${n.id}" title="Study just this branch: ${n.name}">${n.name}</button>`)
+        .join('')}</div>`
+    : '';
+  const branchHtml = siblings.length
+    ? `<div class="d-section"><h4>Next to check in ${leafNode.name}</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${siblings.map((p) => `<button class="chip${(p.minLevel ?? 1) > level ? ' dim' : ''}" data-goto="${p.id}">${p.name}${(p.minLevel ?? 1) > level ? ' 🔒' : ''}</button>`).join('')}
+        </div></div>`
+    : '';
+
   const actions = [];
   if (hasVisibleModel) actions.push(`<button class="btn primary" data-action="focus">🎯 Zoom to it</button>`);
   actions.push(`<button class="btn" data-action="isolate">🫧 Isolate ${sys.name}</button>`);
   if (micro) actions.push(`<button class="btn" data-action="micro" ${state.level >= 4 ? '' : 'disabled title="Available from Undergraduate level"'}>🔬 Micro view</button>`);
   actions.push(`<button class="btn" data-action="quiz">🎯 Quiz me on this</button>`);
+  if (leafNode) actions.push(`<button class="btn" data-action="branch" title="Light up only the layers ${leafNode.name} needs, and frame it">🛠 Only ${leafNode.name}</button>`);
 
   const note = locked
     ? `<div class="d-note">🔒 This structure appears in the 3D model from <b>${LEVEL_BY_ID[part.minLevel].short}</b> onwards. You can still read about it below.</div>`
@@ -513,10 +650,12 @@ function renderDetails(part) {
     <span class="d-sys" style="color:${sys.color};border-color:${sys.color}55">${sys.icon || ''} ${sys.name}</span>
     <h1 class="d-title">${part.name}<span class="d-level-pill">${tierLabel}</span></h1>
     ${part.latin ? `<p class="d-latin">${part.latin}</p>` : ''}
+    ${trailHtml}
     <p class="d-body">${body}</p>
     <div class="d-actions">${actions.join('')}</div>
     ${note}
     ${facts}
+    ${branchHtml}
     <div class="d-section"><h4><span class="caret">▾</span> Every level of detail</h4>
       <div class="d-content">${tiersHtml}</div>
     </div>
@@ -525,6 +664,13 @@ function renderDetails(part) {
 
   $('#details').querySelectorAll('[data-goto]').forEach((b) => {
     b.onclick = () => showPart(b.dataset.goto, { focus: true });
+  });
+  $('#details').querySelectorAll('[data-trail]').forEach((b) => {
+    b.onclick = () => {
+      setBrowse('tree');
+      partTree?.reveal(part.id);
+      showTreeNode(b.dataset.trail);
+    };
   });
   $('#details').querySelectorAll('[data-action]').forEach((b) => {
     b.onclick = () => {
@@ -538,6 +684,12 @@ function renderDetails(part) {
       }
       if (a === 'micro') enterMicro(part.id);
       if (a === 'quiz') openQuiz({ systemId: part.system, focusPart: part });
+      if (a === 'branch' && leafNode) {
+        setBrowse('tree');
+        for (const n of trail) partTree?.setOpen(n.id, true);
+        showTreeNode(leafNode.id);
+        partTree?.reveal(part.id);
+      }
     };
   });
   $('#details').querySelectorAll('h4').forEach((h) => {
@@ -646,17 +798,20 @@ function wireSearch() {
 /* ==================================================================== */
 /*  Quiz                                                                */
 /* ==================================================================== */
-function openQuiz({ systemId = null, focusPart = null } = {}) {
+function openQuiz({ systemId = null, focusPart = null, nodeId = null } = {}) {
   const modal = $('#quizModal');
   const body = $('#quizBody');
   modal.hidden = false;
-  let qs = makeQuestions({ level: state.level, systemId, count: 8 });
+  // a tree node narrows the pool to that region or branch; a system does the same
+  const partIds = nodeId ? partIdsUnder(nodeId) : null;
+  let qs = makeQuestions({ level: state.level, systemId, partIds, count: 8 });
   if (focusPart) {
-    const first = makeQuestions({ level: state.level, systemId: focusPart.system, count: 12 });
+    const first = makeQuestions({ level: state.level, systemId: focusPart.system, partIds, count: 12 });
     const mine = first.filter((q) => q.part.id === focusPart.id);
     qs = [...mine, ...first.filter((q) => q.part.id !== focusPart.id)].slice(0, 8);
   }
-  state.quiz = { qs, i: 0, score: 0, answered: false };
+  const scope = nodeId ? nodeTitle(nodeId) : systemId ? SYSTEM_BY_ID[systemId]?.name : null;
+  state.quiz = { qs, i: 0, score: 0, answered: false, scope };
   renderQuiz();
 }
 
@@ -681,7 +836,7 @@ function renderQuiz() {
   const cur = q.qs[q.i];
   body.innerHTML = `
     <div class="quiz-head">
-      <h3>Quiz · ${LEVEL_BY_ID[state.level].short}</h3>
+      <h3>Quiz · ${LEVEL_BY_ID[state.level].short}${q.scope ? ` · ${q.scope}` : ''}</h3>
       <span class="quiz-score">Question ${q.i + 1}/${q.qs.length} · Score ${q.score}</span>
     </div>
     <div class="quiz-q"><span class="q-kind">${cur.kind === 'system' ? 'Which system?' : cur.kind === 'latin' ? 'Latin name' : 'Who am I?'}</span>${cur.prompt}</div>
@@ -786,7 +941,7 @@ function flashStatus(msg) {
 }
 
 function updateStatus() {
-  $('#statCounts').textContent = `${ATLAS_STATS.parts} parts · ${ATLAS_STATS.systems} systems · ${LEVEL_BY_ID[state.level].short}`;
+  $('#statCounts').textContent = `${ATLAS_STATS.parts} parts · ${ATLAS_STATS.systems} systems · ${TREE_REGIONS.length} regions · ${LEVEL_BY_ID[state.level].short}`;
 }
 
 /** Small, non-intrusive provenance indicator for progressive clinical 3D. */
@@ -886,13 +1041,20 @@ function wireUI() {
   $('#btnAllSystems').onclick = () => {
     state.visible = new Set((LEVEL_SYSTEMS[state.level] || SYSTEMS.map((s) => s.id)));
     state.activeSystem = null;
+    state.treeNode = null;
     viewer.setSystems([...state.visible]);
     buildSystemList();
     renderParts();
     renderPlate();
   };
   $('#partsTitle').onclick = () => {
+    // in the tree this means "back to the whole body", in the list "every system"
     state.activeSystem = null;
+    state.treeNode = null;
+    if (state.browse === 'tree' && $('#treeFilter').value) {
+      $('#treeFilter').value = '';
+      partTree?.setFilter('');
+    }
     buildSystemList();
     renderParts();
     renderPlate();
@@ -900,10 +1062,39 @@ function wireUI() {
   $('#partsTitle').style.cursor = 'pointer';
   $('#btnNoSystems').onclick = () => {
     state.visible = new Set();
+    state.treeNode = null;
     viewer.setSystems([]);
     buildSystemList();
     renderParts();
     renderPlate();
+  };
+
+  // the body-part tree: browse the atlas a part at a time
+  $$('#browseSwitch .seg-btn').forEach((b) => {
+    b.onclick = () => setBrowse(b.dataset.browse);
+  });
+  let treeFilterTimer = null;
+  $('#treeFilter').oninput = (e) => {
+    clearTimeout(treeFilterTimer);
+    const value = e.target.value;
+    treeFilterTimer = setTimeout(() => partTree?.setFilter(value), 120);
+  };
+  $('#treeFilter').onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      clearTimeout(treeFilterTimer);
+      partTree?.setFilter(e.target.value);
+      const first = $('#partTree').querySelector('.tree-row.part');
+      if (first) showPart(first.dataset.part, { focus: true });
+    }
+    if (e.key === 'Escape') { e.target.value = ''; partTree?.setFilter(''); }
+  };
+  $('#btnTreeExpand').onclick = () => partTree?.expandAll();
+  $('#btnTreeCollapse').onclick = () => partTree?.collapseAll();
+  $('#btnTreeReveal').onclick = () => {
+    if (!state.selectedPartId) return flashStatus('Open a part first — then 📍 shows where it sits in the tree.');
+    setBrowse('tree');
+    partTree?.reveal(state.selectedPartId);
+    flashStatus(`${PART_BY_ID[state.selectedPartId].name} — ${trailLabel(state.selectedPartId)}.`);
   };
   $('#btnCloseDetails').onclick = () => {
     if (mobile) mobile.close();
@@ -943,6 +1134,7 @@ function wireUI() {
     if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
     if (e.key.toLowerCase() === 'x') $('#btnXray').click();
     if (e.key.toLowerCase() === 'p') setMode(state.mode === '3d' ? '2d' : '3d');
+    if (e.key.toLowerCase() === 't') setBrowse(state.browse === 'tree' ? 'list' : 'tree');
     if (e.key.toLowerCase() === 'l' && state.mode === '2d' && state.plateStyle === 'interactive') togglePlateLabels();
     if (e.key.toLowerCase() === 'r') { viewer.exitMicro(); viewer.resetView(); }
     if (e.key === 'Escape') {
@@ -986,7 +1178,7 @@ function createFallbackViewer(canvas) {
     isMeshVisible: () => false,
     resize: noop, applyLevel: noop, setSystems: noop, toggleSystem: () => true,
     setIsolate: noop, setOpacity: noop, setXray: noop, setClipping: noop,
-    setAutoRotate: noop, focusPart: () => false, focusSystem: noop, setView: noop,
+    setAutoRotate: noop, focusPart: () => false, focusParts: () => false, focusSystem: noop, setView: noop,
     resetView: noop, selectPart: noop, enterMicro: () => false, exitMicro: noop,
     refreshVisibility: noop, setVariant: noop, setPaused: noop, setSkin: noop,
     isolateSystem: null,

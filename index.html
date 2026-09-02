@@ -74,9 +74,23 @@
         <div id="complexion" class="complexion"></div>
         <div class="panel-head sub">
           <h2 id="partsTitle">Parts</h2>
-          <span class="count" id="partsCount"></span>
+          <div class="mini-actions">
+            <div class="seg" id="browseSwitch" role="tablist" aria-label="Browse parts as a region tree or a flat list">
+              <button class="seg-btn active" data-browse="tree" role="tab" title="Work through the body a part at a time: region → branch → part">🌳 Tree</button>
+              <button class="seg-btn" data-browse="list" role="tab" title="One flat list of every part at your level">☰ List</button>
+            </div>
+            <span class="count" id="partsCount"></span>
+          </div>
         </div>
-        <div id="partList" class="part-list"></div>
+        <div id="treeBar" class="tree-bar">
+          <input id="treeFilter" class="tree-filter" type="search" autocomplete="off"
+                 placeholder="Filter the tree…" aria-label="Filter the body-part tree" />
+          <button class="chip tiny" id="btnTreeReveal" title="Show where the open part sits in the tree">📍</button>
+          <button class="chip tiny" id="btnTreeExpand" title="Open every region and branch">⇱</button>
+          <button class="chip tiny" id="btnTreeCollapse" title="Close every region">⇲</button>
+        </div>
+        <div id="partTree" class="part-tree"></div>
+        <div id="partList" class="part-list" hidden></div>
       </aside>
 
       <!-- RIGHT: details -->
@@ -193,13 +207,14 @@
             <li><b>Drag</b> to rotate · <b>Scroll</b> to zoom · <b>Right-drag</b> to pan · <b>Click</b> a part to study it.</li>
             <li>Pick a <b>level</b> at the top: the same 3D body is explained differently for Class 1, Class 6, Class 10, an undergraduate or a PhD student.</li>
             <li>Toggle <b>systems</b> on the left to add or remove layers — skin, bone, muscle, organs, vessels, nerves.</li>
+            <li>Use the <b>🌳 tree</b> in the left rail to study one body part at a time instead of the whole body: open a region (<b>Head &amp; Neck</b>, <b>Lower Limb</b>…), click a part, then hit <b>🛠</b> on a branch to light up only the layers it needs or <b>🎯</b> to be quizzed on that region alone. <b>☰ List</b> switches back to the flat list.</li>
             <li>Switch to the <b>2D plate</b> (top bar, or press <b>P</b>) for a licensed <b>real anatomical reference</b>. Use the <b>Real reference</b> control to choose an interactive projected overlay when you want clickable regions, labels and SVG export. Both views work where WebGL does not.</li>
             <li>Pick a <b>complexion</b> and switch <b>♀ ↔ ♂</b> in the left rail: both change the model's shape, not just the label.</li>
             <li>Use <b>X-ray</b> to fade the skin, <b>Slice</b> to cut the body open, and <b>Micro view</b> (inside a part, at Undergraduate level or above) to zoom into cells and tissues.</li>
             <li>Press <b>🎯 Quiz</b> to test yourself and <b>🎒 Tour</b> for a guided lesson at your level.</li>
             <li><b>On a phone or tablet:</b> one finger rotates the body, two fingers pinch to zoom and pan, and a tap studies a part.
             The bar along the bottom opens Layers, Tools, Search, Info and More — swipe a sheet down to put it away.</li>
-            <li>Shortcuts: <b>1–5</b> level · <b>P</b> 2D/3D · <b>/</b> search · <b>X</b> x-ray · <b>R</b> reset view · <b>Esc</b> close panels.</li>
+            <li>Shortcuts: <b>1–5</b> level · <b>T</b> tree/list · <b>P</b> 2D/3D · <b>/</b> search · <b>X</b> x-ray · <b>R</b> reset view · <b>Esc</b> close panels.</li>
           </ul>
           <p class="muted small">
             This atlas combines source-derived anatomical references with educational overlays. It is not patient-specific and not a medical device:

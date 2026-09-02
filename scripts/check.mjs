@@ -20,6 +20,9 @@ import { LEVELS, bestDetailFor } from '../src/data/levels.js';
 import { SYSTEMS } from '../src/data/systems.js';
 import { makeQuestions } from '../src/quiz.js';
 import { TOURS } from '../src/data/tours.js';
+import {
+  BODY_TREE, buildTree, treeIssues, partIdsUnder, systemsUnder, pathToPart, trailLabel,
+} from '../src/data/tree.js';
 import { buildPlate, plateLabels, plateToSVG } from '../src/atlas/plate.js';
 
 let problems = 0;
@@ -43,6 +46,56 @@ const ids = ALL_PARTS.map((p) => p.id);
 const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
 if (dupes.length) fail(`duplicate part ids: ${dupes.join(', ')}`);
 else pass(`${ATLAS_STATS.parts} entries across ${ATLAS_STATS.systems} systems, all with level-appropriate text`);
+
+console.log('\n🌲 Body-part tree');
+{
+  const { unknown, duplicates, unfiled } = treeIssues();
+  if (unknown.length) fail(`tree names ids that are not in the atlas: ${unknown.join(', ')}`);
+  if (duplicates.length) fail(`part filed under more than one branch: ${duplicates.join(', ')}`);
+  if (unfiled.length) fail(`parts missing from the tree: ${unfiled.join(', ')}`);
+
+  // shape: region → branch → part, unique node ids, nothing empty
+  const seenIds = new Set();
+  const empty = [];
+  for (const region of BODY_TREE) {
+    if (seenIds.has(region.id)) fail(`duplicate node id ${region.id}`);
+    seenIds.add(region.id);
+    if (!region.icon || !region.blurb) fail(`region ${region.id} needs an icon and a blurb`);
+    if ((region.children || []).length < 2) fail(`region ${region.id} should hold at least two branches`);
+    if ((region.parts || []).length) fail(`region ${region.id} files parts directly; put them in a branch`);
+    for (const branch of region.children || []) {
+      if (seenIds.has(branch.id)) fail(`duplicate node id ${branch.id}`);
+      seenIds.add(branch.id);
+      if (branch.children?.length) fail(`branch ${branch.id} has children — the tree is two levels deep`);
+      if ((branch.parts || []).length < 2) empty.push(branch.id);
+    }
+  }
+  if (empty.length) fail(`branches with a single part (worse than a flat list): ${empty.join(', ')}`);
+
+  // every entry resolves to a trail, and every level's counts add up
+  for (const p of ALL_PARTS) {
+    const trail = pathToPart(p.id);
+    if (trail.length !== 2) fail(`${p.id}: expected a region and a branch in the tree, got ${trail.length}`);
+    else if (trailLabel(p.id).split(' › ').length !== 2) fail(`${p.id}: broken trail label`);
+    for (const sys of systemsUnder(trail[0].id)) if (!SYSTEM_BY_ID[sys]) fail(`${trail[0].id}: unknown system ${sys}`);
+  }
+  for (const lv of LEVELS) {
+    const tree = buildTree({ level: lv.id });
+    const open = tree.reduce((n, r) => n + r.count, 0);
+    const total = tree.reduce((n, r) => n + r.count + r.lockedCount, 0);
+    const expectedOpen = partsForLevel(lv.id).length;
+    if (total !== ALL_PARTS.length) fail(`level ${lv.id}: tree files ${total} of ${ALL_PARTS.length} entries`);
+    if (open !== expectedOpen) fail(`level ${lv.id}: tree offers ${open} parts, the atlas has ${expectedOpen}`);
+    if (!tree.length) fail(`level ${lv.id}: empty tree`);
+  }
+
+  // a branch really can scope a quiz on its own
+  const scopeIds = new Set(partIdsUnder('hn-brain'));
+  const scoped = makeQuestions({ level: 3, partIds: [...scopeIds], count: 8 });
+  if (scoped.length < 8) fail(`branch quiz: only ${scoped.length}/8 questions`);
+  if (scoped.some((q) => !scopeIds.has(q.part.id))) fail('branch quiz drifted outside the branch');
+  pass(`${BODY_TREE.length} regions · ${seenIds.size - BODY_TREE.length} branches · all ${ALL_PARTS.length} entries filed once, quizzes scope to a branch`);
+}
 
 console.log('\n🔍 Search');
 for (const q of ['heart', 'femur', 'nephron', 'mitochondria']) {
