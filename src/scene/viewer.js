@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { deviceProfile } from './quality.js';
 import { buildHumanoid } from './humanoid.js';
 import { PART_BY_ID } from '../data/index.js';
 import { SYSTEM_BY_ID } from '../data/systems.js';
@@ -25,20 +31,54 @@ function softShadowTexture() {
   return t;
 }
 
+/**
+ * A studio cyclorama: a vertical gradient with a soft pool of light behind the
+ * figure, so the body is photographed against something rather than floating on
+ * a flat page. Also gives the bloom pass real pixels to bleed into.
+ */
+function gradientBackdrop() {
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#0a1526');
+  g.addColorStop(0.42, '#132339');
+  g.addColorStop(0.78, '#0c1524');
+  g.addColorStop(1, '#05080f');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 16, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  return t;
+}
+
 export class Viewer {
   constructor(canvas, { onHover, onSelect } = {}) {
     this.canvas = canvas;
     this.onHover = onHover || (() => {});
     this.onSelect = onSelect || (() => {});
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // One profile decides every quality budget in the scene, so a phone gets a
+    // cheaper — but not uglier — version of the same render.
+    const q = deviceProfile();
+    this.quality = q;
+
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: !q.postProcessing, // with post-processing SMAA does the AA instead
+      alpha: true,
+      powerPreference: q.mobile ? 'default' : 'high-performance',
+      stencil: false,
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.maxPixelRatio));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.VSMShadowMap;
+    this.renderer.shadowMap.enabled = q.shadows;
+    this.renderer.shadowMap.type = q.softShadows ? THREE.VSMShadowMap : THREE.PCFSoftShadowMap;
     // filmic tone mapping: skin highlights roll off instead of clipping to white
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.05;
     this.renderer.localClippingEnabled = true;
 
     this.scene = new THREE.Scene();
@@ -54,8 +94,16 @@ export class Viewer {
     this.controls.minDistance = 0.35;
     this.controls.maxDistance = 6;
     this.controls.maxPolarAngle = Math.PI * 0.92;
+    // Touch: one finger orbits the body, two fingers pinch-zoom and pan. Without
+    // this the browser's own scroll/zoom steals every gesture on a phone.
+    this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    this.controls.zoomSpeed = q.touch ? 0.8 : 1;
+    this.controls.rotateSpeed = q.touch ? 0.75 : 1;
+    this.controls.panSpeed = q.touch ? 0.7 : 1;
+    this.controls.enablePan = true;
 
     this._buildEnvironment();
+    this._buildComposer();
 
     const human = buildHumanoid('female', { skin: 'light' });
     this.human = human;
@@ -106,11 +154,18 @@ export class Viewer {
    * ------------------------------------------------------------------ */
   _buildEnvironment() {
     // image-based lighting: gives skin its soft gradient reflections
+    const q = this.quality;
+
+    // A studio backdrop rather than a transparent canvas. Beyond looking like a
+    // photographic cyclorama, it means the post-processing chain has real pixels
+    // to work with — bloom over a transparent buffer composites badly.
+    this.scene.background = gradientBackdrop();
+
     try {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
-      this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.06).texture;
+      this.envTexture = pmrem.fromScene(new RoomEnvironment(), q.envResolution).texture;
       this.scene.environment = this.envTexture;
-      this.scene.environmentIntensity = 0.5;
+      this.scene.environmentIntensity = 0.62;
       pmrem.dispose();
     } catch (err) {
       console.warn('environment map unavailable:', err);
@@ -121,8 +176,8 @@ export class Viewer {
 
     const key = new THREE.DirectionalLight(0xfff3e6, 2.15);
     key.position.set(1.6, 2.2, 2.4);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.castShadow = q.shadows;
+    key.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
     key.shadow.camera.near = 0.1;
     key.shadow.camera.far = 8;
     key.shadow.camera.left = -1.4;
@@ -173,6 +228,34 @@ export class Viewer {
     this.grid = grid;
   }
 
+  /**
+   * Post-processing. Only on the "high" tier: a whisper of bloom so the
+   * highlight/selection glows bleed like real light, and SMAA to keep the
+   * silhouette clean now that MSAA is off. Phones skip the whole chain — a
+   * full-screen pass at device pixel ratio is the single most expensive thing
+   * you can ask a mobile GPU to do.
+   */
+  _buildComposer() {
+    if (!this.quality.postProcessing) {
+      this.composer = null;
+      return;
+    }
+    try {
+      const size = this.renderer.getSize(new THREE.Vector2());
+      const composer = new EffectComposer(this.renderer);
+      composer.addPass(new RenderPass(this.scene, this.camera));
+      const bloom = new UnrealBloomPass(size, 0.28, 0.7, 0.92);
+      composer.addPass(bloom);
+      composer.addPass(new OutputPass());
+      composer.addPass(new SMAAPass());
+      this.composer = composer;
+      this.bloomPass = bloom;
+    } catch (err) {
+      console.warn('post-processing unavailable, falling back to direct render:', err);
+      this.composer = null;
+    }
+  }
+
   _buildHighlightMaterials() {
     this._hoverMats = new Map();
     this._selectMats = new Map();
@@ -193,38 +276,70 @@ export class Viewer {
   /* ------------------------------------------------------------------ */
   _bindEvents() {
     const c = this.canvas;
-    c.addEventListener('pointermove', (e) => {
+    const setPointer = (e) => {
       const r = c.getBoundingClientRect();
       this.pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      this._pointerPx = { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    c.addEventListener('pointermove', (e) => {
+      // A finger dragging the body is orbiting, not hovering: only a mouse gets
+      // the live hover label, otherwise the tooltip chases the drag.
+      if (e.pointerType !== 'mouse') return;
+      setPointer(e);
       this.pointerActive = true;
       this._needsPick = true;
-      this._pointerPx = { x: e.clientX - r.left, y: e.clientY - r.top };
     });
     c.addEventListener('pointerleave', () => {
       this.pointerActive = false;
       this._setHovered(null);
     });
+
     let down = null;
-    c.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
-    c.addEventListener('pointerup', (e) => {
+    let multi = 0;
+    c.addEventListener('pointerdown', (e) => {
+      multi++;
+      down = { x: e.clientX, y: e.clientY, t: performance.now(), type: e.pointerType, multi };
+    });
+    const endPointer = (e) => {
+      multi = Math.max(0, multi - 1);
       if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       const dt = performance.now() - down.t;
-      if (moved < 6 && dt < 500) {
+      // touch fingers wobble: allow a slightly bigger slop before we call it a drag
+      const slop = down.type === 'mouse' ? 6 : 12;
+      const wasPinch = down.multi > 1 || multi > 0;
+      if (moved < slop && dt < 500 && !wasPinch) {
+        setPointer(e);
+        this.pointerActive = true;
         const hit = this._pick();
         if (hit) this.selectPart(hit.object.userData.partId, { fromClick: true });
         else this.selectPart(null, { fromClick: true });
+        // a tap should not leave a hover glow stuck on the model
+        if (down.type !== 'mouse') {
+          this.pointerActive = false;
+          this._setHovered(null);
+        }
       }
       down = null;
-    });
+    };
+    c.addEventListener('pointerup', endPointer);
+    c.addEventListener('pointercancel', () => { multi = Math.max(0, multi - 1); down = null; });
   }
 
   resize() {
     const parent = this.canvas.parentElement;
     const w = parent.clientWidth || window.innerWidth;
     const h = parent.clientHeight || window.innerHeight;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality.maxPixelRatio));
     this.renderer.setSize(w, h, false);
+    if (this.composer) this.composer.setSize(w, h);
     this.camera.aspect = w / h;
+    // A phone held upright is a tall, narrow window: at a fixed field of view the
+    // body would be cropped at the head and feet. Widen the vertical FOV as the
+    // frame gets narrower so the whole figure always fits.
+    const portrait = THREE.MathUtils.clamp(h / Math.max(1, w), 1, 2.2);
+    this.camera.fov = w >= h ? 38 : THREE.MathUtils.clamp(38 * (0.72 + portrait * 0.38), 38, 62);
     this.camera.updateProjectionMatrix();
   }
 
@@ -611,7 +726,8 @@ export class Viewer {
     }
 
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {

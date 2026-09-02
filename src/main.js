@@ -7,6 +7,7 @@ import { ALL_PARTS, PART_BY_ID, ATLAS_STATS, partsForSystem, partsForLevel, sear
 import { makeQuestions } from './quiz.js';
 import { buildHumanoid } from './scene/humanoid.js';
 import { TOURS } from './data/tours.js';
+import { MobileShell } from './mobile.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -49,6 +50,7 @@ const state = {
 let viewer = null;
 let plate = null;
 let hoverEl = null;
+let mobile = null;
 
 /* ==================================================================== */
 /*  Boot                                                                */
@@ -73,10 +75,19 @@ function boot() {
   viewer.onModelRebuilt = () => renderPlate();
 
   viewer.resize();
-  window.addEventListener('resize', () => {
-    viewer.resize();
-    if (state.mode === '2d') renderPlate();
-  });
+  // Phones fire resize on every scroll of the URL bar and on rotation; coalesce
+  // them into one relayout per frame so we never rebuild the plate mid-gesture.
+  let resizeTimer = null;
+  const relayout = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      viewer.resize();
+      if (state.mode === '2d') renderPlate();
+    }, 120);
+  };
+  window.addEventListener('resize', relayout);
+  window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', relayout);
 
   // the 2D plate is a second rendering of the same model, so it keeps every
   // interaction: hover, click, system layers, x-ray and level gating
@@ -84,6 +95,22 @@ function boot() {
     onHover: (info) => handleHover(info),
     onLeave: () => handleHover(null),
     onSelect: (id) => showPart(id, { focus: false }),
+  });
+
+  // the phone shell: same panels, presented as bottom sheets behind a tab bar
+  mobile = new MobileShell({
+    actions: {
+      tour: () => openTour(),
+      quiz: () => openQuiz({ systemId: state.activeSystem }),
+      mode: () => setMode(state.mode === '3d' ? '2d' : '3d'),
+      reset: () => { viewer.exitMicro(); viewer.resetView(); if (plate) plate.resetView(); },
+      help: () => ($('#helpModal').hidden = false),
+    },
+    onSheetChange: () => {
+      // a sheet changes how much of the canvas is visible
+      viewer.resize();
+      if (state.mode === '2d') renderPlate();
+    },
   });
 
   buildLevelSwitch();
@@ -120,6 +147,8 @@ function setMode(mode) {
   } else {
     $('#statusText').textContent = 'Click any part of the body to learn about it.';
   }
+  const modeBtn = document.querySelector('[data-more="mode"]');
+  if (modeBtn) modeBtn.textContent = mode === '2d' ? '🧍 3D model' : '🖼 2D plate';
   if (viewer.setPaused) viewer.setPaused(mode === '2d');
 }
 
@@ -336,6 +365,8 @@ function showPart(partId, { focus = false, from3d = false } = {}) {
   renderParts();
   renderDetails(part);
   $('#rightPanel').hidden = false;
+  // on a phone the details live in a sheet: bring it up when a part is picked
+  if (mobile) mobile.revealDetails();
 
   if (state.mode === '2d') {
     // the plate is a projection of the model, so a part that is not drawn here
@@ -782,6 +813,7 @@ function wireUI() {
     renderPlate();
   };
   $('#btnCloseDetails').onclick = () => {
+    if (mobile) mobile.close();
     $('#rightPanel').hidden = true;
     viewer.selectPart(null);
     if (plate) plate.setSelected(null);
@@ -821,6 +853,7 @@ function wireUI() {
     if (e.key.toLowerCase() === 'l' && state.mode === '2d') togglePlateLabels();
     if (e.key.toLowerCase() === 'r') { viewer.exitMicro(); viewer.resetView(); }
     if (e.key === 'Escape') {
+      if (mobile) mobile.close();
       $('#quizModal').hidden = true;
       $('#helpModal').hidden = true;
       $('#tourModal').hidden = true;
