@@ -643,6 +643,31 @@ export class Viewer {
     return true;
   }
 
+  /**
+   * Frame a set of parts at once. The body-part tree uses this to point the
+   * camera at a region or branch instead of a single structure, so the meshes
+   * are unioned whether or not the teaching fallback is currently on screen —
+   * the camera only needs the extent, not the visibility.
+   */
+  focusParts(partIds = [], { zoom = true } = {}) {
+    if (!partIds.length || this.microMode) return false;
+    const meshes = [];
+    for (const id of partIds) meshes.push(...(this.human.byPart.get(id) || []));
+    if (!meshes.length) return false;
+    TMP_BOX.makeEmpty();
+    for (const mesh of meshes) {
+      mesh.updateWorldMatrix(true, false);
+      TMP_BOX.union(new THREE.Box3().setFromObject(mesh));
+    }
+    if (TMP_BOX.isEmpty()) return false;
+    TMP_BOX.getCenter(TMP_VEC);
+    const size = TMP_BOX.getSize(new THREE.Vector3()).length();
+    const dist = Math.max(0.34, size * (zoom ? 1.25 : 1.9));
+    const dir = new THREE.Vector3(0.42, 0.16, 1).normalize();
+    this._tweenCamera(TMP_VEC.clone().add(dir.multiplyScalar(dist)), TMP_VEC.clone(), 700);
+    return true;
+  }
+
   focusSystem(systemId) {
     const meshes = this.human.allMeshes.filter((mesh) => mesh.userData.system === systemId && this.isMeshVisible(mesh));
     if (!meshes.length) return;

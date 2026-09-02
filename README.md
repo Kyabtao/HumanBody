@@ -18,6 +18,7 @@ chondrocyte mechanotransduction, zonal collagen architecture and osteoarthritis 
 | **1,000+** | lightweight procedural teaching meshes retained as an immediate offline/loading fallback and interactive overlay |
 | **22** | microscopic models — cell, nucleus, mitochondria, DNA, nephron, alveoli, villi, osteon, neuron, placenta, reflex arc, feedback loops … |
 | **5** | learning levels, each rewriting every explanation |
+| **12 → 37 → 156** | the same atlas as a **body-part tree**: 12 regions, 37 branches, every entry filed once |
 | **5** | guided tours and an endless self-testing quiz |
 | **2** | views of the same body: the rotatable **3D model** and a flat, zoomable, printable **2D plate** |
 
@@ -61,7 +62,9 @@ on a locked-down school laptop.
 
 ### Things to try
 
-- **Click anything.** Hover for a label, click for a full explanation with a "zoom to it" button.
+- **Work through one body part at a time.** The **🌳 tree** in the left rail opens as region → branch → part (Head & Neck → Brain & meninges → Brain, Lower Limb → Knee → Knee cap). Every entry in the atlas is filed in exactly one branch, so a branch is a complete checklist for that corner of the body — and each one says which layers to turn on to see it.
+- **🛠 on a branch** lights up only the layers it needs and frames the camera on it; **🎯** quizzes that branch alone; **◎** zooms to a single part. **📍** reveals the part you are reading, **⇱/⇲** open or shut everything, and the filter box finds a word across names, Latin terms, tags and systems. Press **T** (or **☰ List**) for the flat list.
+- **Click anything.** Hover for a label, click for a full explanation with a "zoom to it" button. The reader panel shows the part's place in the tree — click a crumb to study just that branch.
 - **Peel the body.** Turn systems on and off, hit **🩻 X-ray** to fade the skin, or **✂️ Slice** to cut through it.
 - **🔬 Micro view.** From level 4, open a part and dive into a 3D cell, a nephron, an alveolus or a DNA helix.
 - **🎯 Quiz.** Generated from the real atlas text, at your level, on one system or the whole body.
@@ -70,7 +73,7 @@ on a locked-down school laptop.
   five complexion swatches retint its skin, lips, nails and hair. The source-derived whole-body
   reference is a shared adult atlas, while its male reproductive source layer is shown only in male mode.
 - **🖼 2D plate.** Press **P** for a source-authentic reference illustration; switch to **Interactive overlay** to click regions, toggle labels with **L**, and export SVG or PNG.
-- **Search** (`/`) • **1–5** levels • **P** 2D/3D • **X** x-ray • **R** reset view • **Esc** close.
+- **Search** (`/`) • **1–5** levels • **T** tree ⇄ list • **P** 2D/3D • **X** x-ray • **R** reset view • **Esc** close.
 
 ---
 
@@ -92,8 +95,10 @@ npm run plate    # regenerate the flat plates in public/atlas/ (--views front,ba
 
 `npm run check` is a headless self-test: it verifies that every entry has text for every level,
 that every mesh, tour step and search result resolves, that internal organs stay inside the body
-envelope, that quizzes can be built at each level, and that every 2D plate projects cleanly for
-both body types. It exits non-zero on failure, so it fits straight into CI.
+envelope, that the **body-part tree files every entry exactly once** (no unknown, duplicated or
+missing ids, and sensible counts at all five levels), that quizzes can be built at each level and
+scoped to a single branch, and that every 2D plate projects cleanly for both body types. It exits
+non-zero on failure, so it fits straight into CI.
 
 Requires Node 18+. The only runtime dependency is [three.js](https://threejs.org/).
 
@@ -133,9 +138,11 @@ src/
   data/
     levels.js               the five learning levels
     systems.js              the thirteen systems
+    tree.js                 the regional body-part tree (region → branch → part)
     tours.js                guided lessons per level
     parts/*.js              the anatomy content (one file per system)
     index.js                aggregation + search
+  tree.js                   the tree control in the left rail (open, filter, reveal)
   atlas/
     reference.js            source/authorship metadata for real 2D reference plates
     plate.js                procedural teaching model → interactive 2D projection
@@ -196,6 +203,11 @@ P('part-id', 'Display Name', {
 It becomes searchable, quiz-able and visible in the parts list straight away. To give it a 3D
 shape, add meshes with the same id in the matching builder; to give it a microscopic model, add a
 `model('part-id')` group in `src/scene/builders/micro.js`.
+
+Then file it in the tree, or `npm run check` will tell you it is missing: add the id to the right
+branch of `BODY_TREE` in `src/data/tree.js` (region → branch → part, one branch per part). A part
+that genuinely belongs to several regions goes in the one a learner would look for first; the
+cross-links in the reader panel come from the system, so nothing is lost.
 
 ---
 
