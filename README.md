@@ -218,6 +218,15 @@ real source-derived anatomical resources, but they are not patient-specific and 
 coarse educational mappings, colours, overlays and text are simplified for learning. Always
 consult a clinician for medical decisions.
 
+## Changelog
+
+### v1.0.0
+- Initial public release: 156 anatomy entries across 13 systems, 5 learning levels, the
+  12 → 37 → 156 body-part tree, 5 guided tours, an in-app quiz, real source-derived 3D
+  layers (BodyParts3D / Z-Anatomy, CC BY-SA 4.0) with a procedural fallback, and the
+  licensed 2D reference plate with interactive overlay. See `npm run check` for the
+  content self-test that gates every release.
+
 ## Licence and attribution
 
 The application code is MIT — see [LICENSE](LICENSE). The bundled clinical GLB data is
