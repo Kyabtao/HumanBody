@@ -8,6 +8,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { deviceProfile } from './quality.js';
 import { buildHumanoid } from './humanoid.js';
+import { ClinicalAnatomy, clinicalPartIdFromHit } from './clinical-models.js';
 import { PART_BY_ID } from '../data/index.js';
 import { SYSTEM_BY_ID } from '../data/systems.js';
 
@@ -109,6 +110,13 @@ export class Viewer {
     this.human = human;
     this.scene.add(human.root);
     this.scene.add(human.microRoot);
+
+    // The immediate procedural teaching model is retained as an offline/load
+    // fallback. ClinicalAnatomy progressively swaps each enabled macroscopic
+    // system for bundled, source-derived BodyParts3D / Z-Anatomy geometry.
+    this.clinical = new ClinicalAnatomy(human, {
+      onStatus: (event) => this._onClinicalStatus(event),
+    });
 
     // state
     this.visibleSystems = new Set(['surface']);
@@ -273,6 +281,20 @@ export class Viewer {
     return m;
   }
 
+  /** Bridge the asynchronous clinical asset loader to the app/UI hooks. */
+  _onClinicalStatus(event) {
+    if (event.state === 'ready') {
+      this._setHovered(null);
+      // An opacity clone may retain the previous complexion. Recreate it on
+      // the next visibility pass from the newly loaded source material.
+      this._opMats?.clear();
+      this.refreshVisibility();
+      if (this.selectedPartId) this.selectPart(this.selectedPartId);
+      this.onModelRebuilt?.();
+    }
+    this.onClinicalStatus?.(event);
+  }
+
   /* ------------------------------------------------------------------ */
   _bindEvents() {
     const c = this.canvas;
@@ -313,7 +335,7 @@ export class Viewer {
         setPointer(e);
         this.pointerActive = true;
         const hit = this._pick();
-        if (hit) this.selectPart(hit.object.userData.partId, { fromClick: true });
+        if (hit) this.selectPart(this.partIdForHit(hit), { fromClick: true });
         else this.selectPart(null, { fromClick: true });
         // a tap should not leave a hover glow stuck on the model
         if (down.type !== 'mouse') {
@@ -360,11 +382,27 @@ export class Viewer {
     const level = this.level;
     for (const mesh of this.human.allMeshes) {
       const part = PART_BY_ID[mesh.userData.partId];
-      const minLevel = part?.minLevel ?? 1;
+      const minLevel = mesh.userData.minLevel ?? part?.minLevel ?? 1;
       const sys = mesh.userData.system;
+      const isClinical = Boolean(mesh.userData.referenceComposite);
       let visible = this.visibleSystems.has(sys) && minLevel <= level;
       if (this.isolateSystem && sys !== this.isolateSystem) visible = false;
       if (this.microMode) visible = false;
+
+      if (isClinical) {
+        // The bundled organ export has a male reproductive sub-layer. Keep the
+        // educational female fallback for that one layer when female is chosen.
+        if (mesh.userData.referenceSex && mesh.userData.referenceSex !== this.human.variant) visible = false;
+        mesh.userData.hiddenByReference = false;
+      } else if (this.human.isReferenceActiveForSystem?.(sys)) {
+        // A source-derived mesh now supplies this layer; do not stack a blob or
+        // tube-shaped fallback directly inside it. The 2D interactive-overlay
+        // mode can still deliberately project this flagged fallback.
+        visible = false;
+        mesh.userData.hiddenByReference = true;
+      } else {
+        mesh.userData.hiddenByReference = false;
+      }
       mesh.visible = visible;
 
       // opacity rules
@@ -381,9 +419,24 @@ export class Viewer {
       }
       mesh.renderOrder = sys === 'integumentary' ? 3 : sys === 'surface' ? 2 : 0;
     }
-    // the translucent skin envelope follows the integumentary toggle
+
+    // The selected source submesh is a separate, short-lived overlay. It needs
+    // the same system/isolation rules as the combined source layer beneath it.
+    const highlight = this.human.referenceHighlight;
+    if (highlight) {
+      const canShow = (highlight.userData.systems || []).some((sys) =>
+        this.visibleSystems.has(sys)
+        && (!this.isolateSystem || this.isolateSystem === sys)
+        && this.human.isReferenceActiveForSystem?.(sys)
+      );
+      highlight.visible = canShow && !this.microMode;
+    }
+
+    // The translucent procedural envelope is useful when no source body surface
+    // is displayed. Avoid putting it over the authentic surface mesh.
     const envelope = this.human.systems.integumentary.getObjectByName('skin-envelope');
-    if (envelope) envelope.visible = this.visibleSystems.has('integumentary') && !this.microMode;
+    const referenceSurfaceShown = this.visibleSystems.has('surface') && this.human.isReferenceActiveForSystem?.('surface');
+    if (envelope) envelope.visible = this.visibleSystems.has('integumentary') && !this.microMode && !referenceSurfaceShown;
   }
 
   _opacityMat(base, opacity) {
@@ -402,6 +455,7 @@ export class Viewer {
   setSystems(systemIds, { silent = false } = {}) {
     this.visibleSystems = new Set(systemIds);
     if (this.microMode) this.exitMicro();
+    this.clinical?.ensureSystems(systemIds);
     this.refreshVisibility();
     if (!silent) this._afterChange();
   }
@@ -411,6 +465,7 @@ export class Viewer {
     if (this.visibleSystems.has(systemId)) this.visibleSystems.delete(systemId);
     else this.visibleSystems.add(systemId);
     this.isolateSystem = null;
+    this.clinical?.ensureSystems([systemId]);
     this.refreshVisibility();
     this._afterChange();
     return this.visibleSystems.has(systemId);
@@ -419,6 +474,7 @@ export class Viewer {
   setIsolate(systemId) {
     this.isolateSystem = systemId;
     if (systemId) this.visibleSystems.add(systemId);
+    if (systemId) this.clinical?.ensureSystems([systemId]);
     this.refreshVisibility();
     this._afterChange();
   }
@@ -462,6 +518,11 @@ export class Viewer {
     return hits.length ? hits[0] : null;
   }
 
+  /** A combined clinical mesh stores its semantic id per source triangle. */
+  partIdForHit(hit) {
+    return clinicalPartIdFromHit(hit);
+  }
+
   _microTargets() {
     const entry = this.human.microModels.get(this._activeMicroModel || '');
     if (!entry) return null;
@@ -486,29 +547,36 @@ export class Viewer {
       return;
     }
     const mesh = hit.object;
+    const partId = this.partIdForHit(hit);
     if (!prev || prev.object !== mesh) {
       const base = mesh.userData.currentMaterial || mesh.userData.baseMaterial;
       this.hovered = { object: mesh, material: base };
-      mesh.material = this._matFor(this._hoverMats, base, { emissive: 0xffbb55, intensity: 0.45 });
+      // Tinting a source composite would light up an entire 3D system when the
+      // cursor is over one bone/vessel. Its precise name still appears in the
+      // hover label, and selection draws an exact submesh overlay instead.
+      if (!mesh.userData.referenceComposite) {
+        mesh.material = this._matFor(this._hoverMats, base, { emissive: 0xffbb55, intensity: 0.45 });
+      }
     }
     this.onHover({
-      partId: mesh.userData.partId,
-      part: PART_BY_ID[mesh.userData.partId],
+      partId,
+      part: PART_BY_ID[partId],
       point: hit.point,
       screen: this._pointerPx,
     });
   }
 
   selectPart(partId, { fromClick = false } = {}) {
-    // clear previous
+    // clear previous teaching-mesh material + any extracted clinical overlay
     for (const m of this.selectedMeshes) {
       m.material = m.userData.currentMaterial || m.userData.baseMaterial;
     }
+    this.human.clearReferenceHighlight?.();
     this.selectedMeshes = [];
     this.selectedPartId = partId || null;
 
     if (!partId) {
-      this.onSelect(null);
+      if (fromClick) this.onSelect(null, { fromClick });
       return;
     }
     const meshes = (this.human.byPart.get(partId) || []).filter((m) => this.isMeshVisible(m));
@@ -517,19 +585,53 @@ export class Viewer {
       m.material = this._matFor(this._selectMats, base, { emissive: 0x33ddff, intensity: 0.7 });
     }
     this.selectedMeshes = meshes;
-    this.onSelect(PART_BY_ID[partId] || null, { fromClick });
+
+    const clinicalHighlight = this.human.setReferenceHighlight?.(partId);
+    if (clinicalHighlight) {
+      const systems = clinicalHighlight.userData.systems || [];
+      clinicalHighlight.visible = !this.microMode && systems.some((sys) =>
+        this.visibleSystems.has(sys)
+        && (!this.isolateSystem || this.isolateSystem === sys)
+        && this.human.isReferenceActiveForSystem?.(sys)
+      );
+    }
+    // UI-originated selections already render their own details. Emit only for
+    // an actual canvas click; otherwise the UI callback would select again.
+    if (fromClick) this.onSelect(PART_BY_ID[partId] || null, { fromClick });
+  }
+
+  /** Whether an enabled clinical layer contains this coarse atlas part. */
+  hasVisibleReferencePart(partId) {
+    const sources = this.human.referencePart?.(partId) || [];
+    return sources.some((source) => this.isMeshVisible(source.mesh));
   }
 
   focusPart(partId, { zoom = true } = {}) {
-    const meshes = this.human.byPart.get(partId) || [];
-    const visible = meshes.filter((m) => this.isMeshVisible(m));
-    if (!visible.length) return false;
-    TMP_BOX.makeEmpty();
-    for (const m of visible) {
-      m.updateWorldMatrix(true, false);
-      const box = new THREE.Box3().setFromObject(m);
-      TMP_BOX.union(box);
+    // Selecting a source-derived structure lazily creates its exact geometry
+    // overlay. Focus that rather than a whole one-draw-call system composite.
+    let clinical = this.human.referenceHighlight;
+    if (!clinical || clinical.name !== `clinical-selection-${partId}`) {
+      clinical = this.human.setReferenceHighlight?.(partId) || null;
+      if (clinical) {
+        const systems = clinical.userData.systems || [];
+        clinical.visible = !this.microMode && systems.some((sys) => this.visibleSystems.has(sys) && (!this.isolateSystem || this.isolateSystem === sys));
+      }
     }
+    if (clinical && clinical.visible) {
+      clinical.updateWorldMatrix(true, true);
+      TMP_BOX.setFromObject(clinical);
+    } else {
+      const meshes = this.human.byPart.get(partId) || [];
+      const visible = meshes.filter((m) => this.isMeshVisible(m));
+      if (!visible.length) return false;
+      TMP_BOX.makeEmpty();
+      for (const m of visible) {
+        m.updateWorldMatrix(true, false);
+        const box = new THREE.Box3().setFromObject(m);
+        TMP_BOX.union(box);
+      }
+    }
+    if (TMP_BOX.isEmpty()) return false;
     TMP_BOX.getCenter(TMP_VEC);
     const size = TMP_BOX.getSize(new THREE.Vector3()).length();
     const dist = Math.max(0.28, size * (zoom ? 2.6 : 4));
@@ -542,9 +644,10 @@ export class Viewer {
   }
 
   focusSystem(systemId) {
-    const grp = this.human.systems[systemId];
-    if (!grp) return;
-    TMP_BOX.setFromObject(grp);
+    const meshes = this.human.allMeshes.filter((mesh) => mesh.userData.system === systemId && this.isMeshVisible(mesh));
+    if (!meshes.length) return;
+    TMP_BOX.makeEmpty();
+    for (const mesh of meshes) TMP_BOX.union(new THREE.Box3().setFromObject(mesh));
     if (TMP_BOX.isEmpty()) return;
     TMP_BOX.getCenter(TMP_VEC);
     const size = TMP_BOX.getSize(new THREE.Vector3()).length();
@@ -649,6 +752,7 @@ export class Viewer {
     this.human.setSkin(toneId);
     this._setHovered(null);
     this.selectedMeshes = [];
+    this._opMats?.clear();
     this.refreshVisibility();
     if (this.selectedPartId) this.selectPart(this.selectedPartId);
     if (this.onSkinChange) this.onSkinChange(toneId);

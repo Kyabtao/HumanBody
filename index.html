@@ -18,8 +18,8 @@
     <div id="app">
       <canvas id="scene"></canvas>
 
-      <!-- 2D plate stage: the flat anatomical image, projected from the same model -->
-      <div id="plateStage" aria-label="2D anatomical plate"></div>
+      <!-- 2D stage: authentic licensed reference plates or an interactive projection -->
+      <div id="plateStage" aria-label="2D anatomical reference plate"></div>
 
       <!-- floating hover label -->
       <div id="hoverLabel" class="hover-label" hidden></div>
@@ -35,7 +35,7 @@
 
         <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="3D model or 2D plate">
           <button class="mode-btn active" data-mode="3d" role="tab" title="Interactive 3D body — drag to rotate">🧍 3D<small>rotate &amp; slice</small></button>
-          <button class="mode-btn" data-mode="2d" role="tab" title="Flat anatomical plate — zoomable image, savable as SVG or PNG">🖼 2D<small>plate / image</small></button>
+          <button class="mode-btn" data-mode="2d" role="tab" title="Real anatomical reference plates and an interactive overlay">🖼 2D<small>reference / overlay</small></button>
         </div>
 
         <div class="level-switch" id="levelSwitch" role="tablist" aria-label="Learning level"></div>
@@ -109,9 +109,10 @@
         </div>
         <div class="tool-group" id="plateGroup" hidden>
           <span class="tool-label">2D plate</span>
+          <button class="chip toggle active" id="btnPlateStyle" title="Switch between a real reference illustration and the interactive overlay">✦ Real reference</button>
           <button class="chip toggle active" id="btnPlateLabels" title="Show the leader-line labels">🏷 Labels</button>
           <button class="chip" id="btnPlateFit" title="Fit the whole body back in view">🔍 Fit</button>
-          <button class="chip" id="btnPlateSVG" title="Download this plate as a vector image">⬇ SVG</button>
+          <button class="chip" id="btnPlateSVG" title="Download this interactive plate as a vector image">⬇ SVG</button>
           <button class="chip" id="btnPlatePNG" title="Download this plate as a PNG image">🖼 PNG</button>
         </div>
         <div class="tool-group" id="sliceGroup" hidden>
@@ -158,6 +159,7 @@
       <div id="statusbar">
         <span id="statusText">Click any part of the body to learn about it.</span>
         <span class="spacer"></span>
+        <span class="clinical-badge" id="clinicalBadge" hidden></span>
         <span class="stat" id="statCounts"></span>
       </div>
 
@@ -191,8 +193,7 @@
             <li><b>Drag</b> to rotate · <b>Scroll</b> to zoom · <b>Right-drag</b> to pan · <b>Click</b> a part to study it.</li>
             <li>Pick a <b>level</b> at the top: the same 3D body is explained differently for Class 1, Class 6, Class 10, an undergraduate or a PhD student.</li>
             <li>Toggle <b>systems</b> on the left to add or remove layers — skin, bone, muscle, organs, vessels, nerves.</li>
-            <li>Switch to the <b>2D plate</b> (top bar, or press <b>P</b>) for a flat anatomical image of the same body:
-            drag to pan, scroll to zoom, click any region to study it, and export it as <b>SVG</b> or <b>PNG</b>. It works even where WebGL does not.</li>
+            <li>Switch to the <b>2D plate</b> (top bar, or press <b>P</b>) for a licensed <b>real anatomical reference</b>. Use the <b>Real reference</b> control to choose an interactive projected overlay when you want clickable regions, labels and SVG export. Both views work where WebGL does not.</li>
             <li>Pick a <b>complexion</b> and switch <b>♀ ↔ ♂</b> in the left rail: both change the model's shape, not just the label.</li>
             <li>Use <b>X-ray</b> to fade the skin, <b>Slice</b> to cut the body open, and <b>Micro view</b> (inside a part, at Undergraduate level or above) to zoom into cells and tissues.</li>
             <li>Press <b>🎯 Quiz</b> to test yourself and <b>🎒 Tour</b> for a guided lesson at your level.</li>
@@ -201,9 +202,10 @@
             <li>Shortcuts: <b>1–5</b> level · <b>P</b> 2D/3D · <b>/</b> search · <b>X</b> x-ray · <b>R</b> reset view · <b>Esc</b> close panels.</li>
           </ul>
           <p class="muted small">
-            This atlas is an educational model. Anatomy is stylised, not patient-specific, and it is not a medical device:
+            This atlas combines source-derived anatomical references with educational overlays. It is not patient-specific and not a medical device:
             always consult a clinician for medical decisions.
           </p>
+          <p class="muted small">Model and plate credits: <a class="source-link" href="./ATTRIBUTION.md" target="_blank" rel="noopener noreferrer">sources &amp; licences ↗</a></p>
         </div>
       </div>
 
