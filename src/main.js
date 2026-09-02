@@ -1,5 +1,6 @@
 import { Viewer } from './scene/viewer.js';
 import { PlateView } from './atlas/stage2d.js';
+import { referencePlateFor } from './atlas/reference.js';
 import { SKIN_TONES } from './scene/anatomy.js';
 import { SYSTEMS, SYSTEM_BY_ID } from './data/systems.js';
 import { LEVELS, LEVEL_BY_ID, bestDetailFor } from './data/levels.js';
@@ -43,6 +44,9 @@ const state = {
   // '3d' = the rotating model · '2d' = the flat plate image projected from it
   mode: '3d',
   view: 'front',
+  // The default 2D view is an independently licensed clinical illustration.
+  // Learners can switch back to the projected, clickable teaching overlay.
+  plateStyle: 'reference',
   plateLabels: true,
   skin: 'light',
 };
@@ -72,7 +76,11 @@ function boot() {
     showWebGLNotice();
   }
   window.__viewer = viewer; // handy for debugging
-  viewer.onModelRebuilt = () => renderPlate();
+  viewer.onModelRebuilt = () => {
+    renderPlate();
+    if (state.selectedPartId) renderDetails(PART_BY_ID[state.selectedPartId]);
+  };
+  viewer.onClinicalStatus = (event) => updateClinicalBadge(event);
 
   viewer.resize();
   // Phones fire resize on every scroll of the URL bar and on rotation; coalesce
@@ -89,8 +97,8 @@ function boot() {
   window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
   if (window.visualViewport) window.visualViewport.addEventListener('resize', relayout);
 
-  // the 2D plate is a second rendering of the same model, so it keeps every
-  // interaction: hover, click, system layers, x-ray and level gating
+  // 2D starts as a licensed clinical reference; the optional overlay remains
+  // a second rendering of the teaching model with hover/click/system controls.
   plate = new PlateView($('#plateStage'), {
     onHover: (info) => handleHover(info),
     onLeave: () => handleHover(null),
@@ -119,6 +127,7 @@ function boot() {
   renderParts();
   wireUI();
   updateStatus();
+  updateClinicalBadge();
   setMode('3d');
   // with no WebGL there is nothing to spin — open the flat plate instead
   if (viewer.fallback) setMode('2d');
@@ -141,9 +150,12 @@ function setMode(mode) {
   $('#plateGroup').hidden = mode !== '2d';
   $('#plateMeta').hidden = mode !== '2d';
   $('#sliceGroup').hidden = mode === '2d' || !state.clip;
+  updatePlateStyleControl();
   if (mode === '2d') {
     renderPlate();
-    flashStatus('2D plate — drag to pan, scroll to zoom, click a region to study it. Press P for the 3D model.');
+    flashStatus(state.plateStyle === 'reference'
+      ? 'Real 2D reference plate — use the layer list to study structures, or switch to the interactive overlay to click regions.'
+      : 'Interactive 2D overlay — drag to pan, scroll to zoom, click a region to study it. Press P for the 3D model.');
   } else {
     $('#statusText').textContent = 'Click any part of the body to learn about it.';
   }
@@ -152,10 +164,10 @@ function setMode(mode) {
   if (viewer.setPaused) viewer.setPaused(mode === '2d');
 }
 
-/** Re-project the model into the flat plate. Cheap enough to call on any change. */
+/** Render either an authentic licensed plate or the app's clickable projection. */
 function renderPlate() {
   if (state.mode !== '2d' || !plate || !viewer) return;
-  const ms = plate.render(viewer.human, {
+  const opts = {
     view: state.view,
     systems: state.visible,
     level: state.level,
@@ -163,12 +175,51 @@ function renderPlate() {
     xray: state.xray,
     labels: state.plateLabels,
     selected: state.selectedPartId,
-  });
+  };
+  const selectedSystem = PART_BY_ID[state.selectedPartId]?.system || null;
+  const useReference = state.plateStyle === 'reference';
+  const ref = useReference ? referencePlateFor({
+    activeSystem: state.activeSystem,
+    selectedSystem,
+    visibleSystems: state.visible,
+  }) : null;
+  const ms = ref ? plate.renderReference(ref, opts) : plate.render(viewer.human, opts);
+  updatePlateStyleControl();
+
   const meta = $('#plateMeta');
   if (meta) {
-    const n = plate.plate ? plate.plate.regions.length : 0;
-    meta.innerHTML = `<b>${plate.plate ? plate.plate.view : ''}</b> · ${n} regions · ${ms} ms · projected from the 3D model`;
+    if (ref) {
+      meta.innerHTML = `<b>Real reference 2D</b> · ${ref.title} · <a href="${ref.sourceUrl}" target="_blank" rel="noopener noreferrer">source &amp; licence ↗</a>`;
+    } else {
+      const n = plate.plate ? plate.plate.regions.length : 0;
+      meta.innerHTML = `<b>${plate.plate ? plate.plate.view : ''}</b> · ${n} regions · ${ms} ms · interactive projection`;
+    }
   }
+}
+
+function updatePlateStyleControl() {
+  const button = $('#btnPlateStyle');
+  const labels = $('#btnPlateLabels');
+  const svg = $('#btnPlateSVG');
+  const png = $('#btnPlatePNG');
+  if (!button) return;
+  const isReference = state.plateStyle === 'reference';
+  button.classList.toggle('active', isReference);
+  button.textContent = isReference ? '✦ Real reference' : '◌ Interactive overlay';
+  button.title = isReference
+    ? 'Showing a licensed source illustration. Click for the interactive projected overlay.'
+    : 'Showing the clickable projected overlay. Click for a real source illustration.';
+  if (labels) labels.hidden = isReference;
+  if (svg) svg.hidden = isReference;
+  if (png) png.textContent = isReference ? '⬇ PNG' : '🖼 PNG';
+}
+
+function togglePlateStyle() {
+  state.plateStyle = state.plateStyle === 'reference' ? 'interactive' : 'reference';
+  renderPlate();
+  flashStatus(state.plateStyle === 'reference'
+    ? 'Real 2D reference plate: an independently licensed medical illustration. Use the layer list to study structures.'
+    : 'Interactive 2D overlay: click regions, drag to pan and scroll to zoom.');
 }
 
 function togglePlateLabels() {
@@ -178,7 +229,15 @@ function togglePlateLabels() {
 }
 
 function savePlate(kind) {
-  if (!plate || !plate.plate) return;
+  if (!plate || (!plate.plate && !plate.reference)) return;
+  if (plate.reference) {
+    plate.referencePNG().then((blob) => {
+      if (!blob) return flashStatus('Could not fetch the bundled reference image in this browser.');
+      downloadBlob(blob, `humanbody-reference-${plate.reference.id}.png`);
+      flashStatus(`Reference PNG saved. Please keep its source credit: ${plate.reference.attribution}.`);
+    });
+    return;
+  }
   const sys = [...state.visible].map((id) => SYSTEM_BY_ID[id]?.name).filter(Boolean).join(' · ');
   const caption = `${LEVEL_BY_ID[state.level].short} — ${sys || 'all systems'}`;
   if (kind === 'svg') {
@@ -240,8 +299,8 @@ function setVariant() {
   if (state.selectedPartId) showPart(state.selectedPartId, { focus: false });
   flashStatus(
     state.variant === 'female'
-      ? 'Female figure: narrower shoulders, wider pelvis, bust, longer hair.'
-      : 'Male figure: broader shoulders and jaw, straighter trunk, shorter hair.'
+      ? 'Female mode: source adult anatomy remains available; female reproductive teaching anatomy is retained.'
+      : 'Male mode: matching source reproductive anatomy is available with the adult reference.'
   );
 }
 
@@ -318,6 +377,7 @@ function buildSystemList() {
       }
       buildSystemList();
       renderParts();
+      renderPlate();
     };
     list.appendChild(row);
   }
@@ -369,8 +429,8 @@ function showPart(partId, { focus = false, from3d = false } = {}) {
   if (mobile) mobile.revealDetails();
 
   if (state.mode === '2d') {
-    // the plate is a projection of the model, so a part that is not drawn here
-    // means its layer is off: turn it on and re-project rather than failing
+    // The interactive overlay is projected from the teaching mesh. In either
+    // 2D mode, turn the requested layer on before showing/focusing its plate.
     const drawn = plate.plate && plate.plate.regions.some((r) => r.partId === partId);
     if (!drawn) {
       if (part.system !== 'micro' && !state.visible.has(part.system)) {
@@ -390,8 +450,9 @@ function showPart(partId, { focus = false, from3d = false } = {}) {
 
   const meshes = viewer.human.byPart.get(partId) || [];
   const visibleNow = meshes.filter((m) => viewer.isMeshVisible(m));
+  const clinicalVisible = viewer.hasVisibleReferencePart?.(partId);
   if (focus) {
-    if (visibleNow.length) viewer.focusPart(partId);
+    if (visibleNow.length || clinicalVisible) viewer.focusPart(partId);
     else if (viewer.human.resolveMicroModel(partId) && state.level >= 4) enterMicro(partId);
   }
   if (from3d) {
@@ -407,6 +468,8 @@ function renderDetails(part) {
   const body = part.details?.[tier] || part.details?.basic || '';
   const meshes = viewer.human.byPart.get(part.id) || [];
   const visibleNow = meshes.filter((m) => viewer.isMeshVisible(m));
+  const clinicalVisible = viewer.hasVisibleReferencePart?.(part.id);
+  const hasVisibleModel = visibleNow.length || clinicalVisible;
   const micro = viewer.human.resolveMicroModel(part.id);
   const locked = (part.minLevel ?? 1) > level;
 
@@ -433,15 +496,17 @@ function renderDetails(part) {
     : '';
 
   const actions = [];
-  if (visibleNow.length) actions.push(`<button class="btn primary" data-action="focus">🎯 Zoom to it</button>`);
+  if (hasVisibleModel) actions.push(`<button class="btn primary" data-action="focus">🎯 Zoom to it</button>`);
   actions.push(`<button class="btn" data-action="isolate">🫧 Isolate ${sys.name}</button>`);
   if (micro) actions.push(`<button class="btn" data-action="micro" ${state.level >= 4 ? '' : 'disabled title="Available from Undergraduate level"'}>🔬 Micro view</button>`);
   actions.push(`<button class="btn" data-action="quiz">🎯 Quiz me on this</button>`);
 
   const note = locked
     ? `<div class="d-note">🔒 This structure appears in the 3D model from <b>${LEVEL_BY_ID[part.minLevel].short}</b> onwards. You can still read about it below.</div>`
-    : !visibleNow.length && !micro
+    : !hasVisibleModel && !micro
     ? `<div class="d-note">This entry is a concept or process rather than a single 3D shape — it is described in the text and appears in quiz and tour modes.</div>`
+    : clinicalVisible
+    ? `<div class="d-note clinical-note">✦ Shown with source-derived clinical 3D geometry. The cyan outline marks the selected structure.</div>`
     : '';
 
   $('#details').innerHTML = `
@@ -724,6 +789,32 @@ function updateStatus() {
   $('#statCounts').textContent = `${ATLAS_STATS.parts} parts · ${ATLAS_STATS.systems} systems · ${LEVEL_BY_ID[state.level].short}`;
 }
 
+/** Small, non-intrusive provenance indicator for progressive clinical 3D. */
+function updateClinicalBadge() {
+  const badge = $('#clinicalBadge');
+  const statuses = viewer?.clinical?.states;
+  if (!badge || !statuses) return;
+  const ready = [...statuses.values()].filter((s) => s === 'ready').length;
+  const loading = [...statuses.values()].filter((s) => s === 'loading' || s === 'queued').length;
+  const failed = [...statuses.values()].filter((s) => s === 'failed').length;
+  badge.hidden = false;
+  badge.classList.toggle('loading', loading > 0);
+  badge.classList.toggle('ready', ready > 0);
+  badge.classList.toggle('failed', failed > 0 && ready === 0);
+  if (ready) {
+    badge.textContent = `✦ Clinical 3D · ${ready} layer${ready === 1 ? '' : 's'} live${loading ? ' · loading…' : ''}`;
+    badge.title = 'Source-derived anatomical geometry is replacing the lightweight teaching fallback for the enabled layers.';
+  } else if (loading) {
+    badge.textContent = '◌ Clinical 3D loading…';
+    badge.title = 'Loading bundled anatomical source geometry; the app remains usable with its fallback model.';
+  } else if (failed) {
+    badge.textContent = '◇ Teaching model fallback';
+    badge.title = 'A clinical source asset could not load, so the lightweight teaching model remains visible.';
+  } else {
+    badge.hidden = true;
+  }
+}
+
 function wireUI() {
   // toolbar: views (drive both the camera and the plate)
   $$('#viewGroup [data-view]').forEach((b) => {
@@ -760,6 +851,7 @@ function wireUI() {
   $$('#modeSwitch .mode-btn').forEach((b) => {
     b.onclick = () => setMode(b.dataset.mode);
   });
+  $('#btnPlateStyle').onclick = () => togglePlateStyle();
   $('#btnPlateLabels').onclick = () => togglePlateLabels();
   $('#btnPlateFit').onclick = () => {
     plate.resetView();
@@ -803,6 +895,7 @@ function wireUI() {
     state.activeSystem = null;
     buildSystemList();
     renderParts();
+    renderPlate();
   };
   $('#partsTitle').style.cursor = 'pointer';
   $('#btnNoSystems').onclick = () => {
@@ -850,7 +943,7 @@ function wireUI() {
     if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
     if (e.key.toLowerCase() === 'x') $('#btnXray').click();
     if (e.key.toLowerCase() === 'p') setMode(state.mode === '3d' ? '2d' : '3d');
-    if (e.key.toLowerCase() === 'l' && state.mode === '2d') togglePlateLabels();
+    if (e.key.toLowerCase() === 'l' && state.mode === '2d' && state.plateStyle === 'interactive') togglePlateLabels();
     if (e.key.toLowerCase() === 'r') { viewer.exitMicro(); viewer.resetView(); }
     if (e.key === 'Escape') {
       if (mobile) mobile.close();

@@ -201,11 +201,16 @@ export function buildPlate(human, opts = {}) {
   const regions = [];
 
   for (const mesh of human.allMeshes) {
-    // microscopic / histology specimens are scaled models of a *sample*, not
-    // anatomy in place, so they have no silhouette to contribute to a plate
-    if (mesh.userData.system === 'micro' || mesh.userData.system === 'histology') continue;
+    // Microscopic / histology specimens are scaled samples rather than anatomy
+    // in place. Source clinical composites are intentionally left to the
+    // licensed reference-plate mode: tracing their millions of triangles in
+    // JavaScript would freeze the interactive SVG view.
+    if (mesh.userData.system === 'micro' || mesh.userData.system === 'histology' || mesh.userData.referenceComposite) continue;
     if (!isVisible(mesh)) continue;
-    if (!mesh.visible) continue;
+    // When a real 3D layer is loaded, its lightweight teaching mesh is hidden
+    // only to avoid a duplicate in WebGL. The optional interactive 2D overlay
+    // may still project that explicitly flagged fallback.
+    if (!mesh.visible && !mesh.userData.hiddenByReference) continue;
     const base = mesh.userData.baseMaterial || mesh.material;
     const color = base && base.color ? `#${base.color.getHexString()}` : '#c9a889';
     const rawOpacity = base ? (base.opacity ?? 1) : 1;

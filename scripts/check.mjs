@@ -9,8 +9,12 @@
  *
  * Exit code 1 on failure, so it can run in CI.
  */
+import fs from 'node:fs';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildHumanoid } from '../src/scene/humanoid.js';
+import { ClinicalAnatomy, CLINICAL_ASSETS } from '../src/scene/clinical-models.js';
+import { REFERENCE_PLATES } from '../src/atlas/reference.js';
 import { ALL_PARTS, PART_BY_ID, SYSTEM_BY_ID, partsForLevel, searchParts, ATLAS_STATS } from '../src/data/index.js';
 import { LEVELS, bestDetailFor } from '../src/data/levels.js';
 import { SYSTEMS } from '../src/data/systems.js';
@@ -79,6 +83,65 @@ for (const [id, meshes] of human.byPart) {
 }
 if (outside.length) fail(`structures poking outside the skin: ${outside.join(', ')}`);
 else pass('every internal structure sits inside the body envelope');
+
+console.log('\n✦ Clinical source assets');
+{
+  // Parse and combine the exact files that the browser loads. This catches a
+  // missing public asset, incompatible GLB attribute layout, or a source name
+  // mapping to an atlas id that does not exist before it reaches a learner.
+  const clinicalHuman = {
+    root: new THREE.Group(), variant: 'male', skin: 'light',
+    reindex: () => {},
+  };
+  const clinical = new ClinicalAnatomy(clinicalHuman);
+  const loader = new GLTFLoader();
+  for (const asset of Object.values(CLINICAL_ASSETS)) {
+    const file = new URL(`../public/models/clinical/${asset.file}`, import.meta.url);
+    if (!fs.existsSync(file)) {
+      fail(`clinical asset missing: ${asset.file}`);
+      continue;
+    }
+    try {
+      const binary = fs.readFileSync(file);
+      const buffer = binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength);
+      const gltf = await new Promise((resolve, reject) => loader.parse(buffer, '', resolve, reject));
+      clinical.integrate(asset, gltf.scene);
+    } catch (error) {
+      fail(`clinical asset ${asset.file} did not parse/integrate: ${error.message}`);
+    }
+  }
+  const clinicalMeshes = [];
+  clinicalHuman.referenceRoot.traverse((object) => { if (object.isMesh) clinicalMeshes.push(object); });
+  const unknown = [...clinicalHuman.referencePartSources.keys()].filter((id) => !PART_BY_ID[id]);
+  const withoutPartAttribute = clinicalMeshes.filter((mesh) => !mesh.geometry.getAttribute('clinicalPart'));
+  const wrongSystem = clinicalMeshes.flatMap((mesh) => (mesh.userData.referencePartIds || [])
+    // `skin` is deliberately displayed in the app's Body Surface & Regions
+    // layer, although its educational text entry lives in Integumentary.
+    .filter((id) => PART_BY_ID[id] && PART_BY_ID[id].system !== mesh.userData.system
+      && !(id === 'skin' && mesh.userData.system === 'surface'))
+    .map((id) => `${id}→${mesh.userData.system}`));
+  if (unknown.length) fail(`clinical mapping uses unknown atlas ids: ${unknown.join(', ')}`);
+  if (wrongSystem.length) fail(`clinical mapping puts parts in the wrong system: ${wrongSystem.join(', ')}`);
+  if (withoutPartAttribute.length) fail(`${withoutPartAttribute.length} clinical composite(s) lack exact-pick data`);
+  for (const id of ['skin', 'femur', 'biceps', 'spinal-cord', 'heart', 'lungs', 'lymph-nodes']) {
+    if (!clinicalHuman.referencePart(id)) fail(`clinical source has no mapped ${id} geometry`);
+  }
+  clinicalHuman.root.updateMatrixWorld(true);
+  const clinicalBox = new THREE.Box3().setFromObject(clinicalHuman.referenceRoot);
+  if (clinicalBox.isEmpty() || clinicalBox.min.y > -0.86 || clinicalBox.max.y < 0.85) {
+    fail('clinical source body is not aligned to the teaching scene frame');
+  }
+  if (!unknown.length && !withoutPartAttribute.length && clinicalMeshes.length) {
+    pass(`${clinicalMeshes.length} source composites / ${clinicalHuman.referencePartSources.size} mapped parts parse and align`);
+  }
+
+  for (const plate of Object.values(REFERENCE_PLATES)) {
+    const file = new URL(`../public/${plate.src.replace(/^\.\//, '')}`, import.meta.url);
+    if (!fs.existsSync(file) || fs.statSync(file).size < 1024) fail(`reference plate unavailable: ${plate.src}`);
+    if (!plate.attribution || !plate.license || !plate.sourceUrl) fail(`reference plate missing credit metadata: ${plate.id}`);
+  }
+  pass(`${Object.keys(REFERENCE_PLATES).length} licensed 2D reference plates are bundled with metadata`);
+}
 
 console.log('\n🔬 Micro view');
 for (const p of ALL_PARTS.filter((p) => p.system === 'micro')) {

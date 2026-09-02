@@ -284,6 +284,20 @@ input[type='range'] { width: 130px; accent-color: var(--accent); }
   z-index: 12; pointer-events: none;
 }
 #statusbar .spacer { flex: 1; }
+.clinical-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  color: #c8fff3;
+  border: 1px solid rgba(53, 214, 198, 0.38);
+  background: rgba(14, 92, 91, 0.28);
+  border-radius: 999px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.clinical-badge.loading { color: #ffe4a8; border-color: rgba(255, 179, 71, 0.42); background: rgba(126, 74, 11, 0.25); }
+.clinical-badge.failed { color: #ffd0d0; border-color: rgba(255, 107, 107, 0.44); background: rgba(120, 24, 36, 0.25); }
 
 /* ---------------- hover label ---------------- */
 .hover-label {
@@ -320,6 +334,8 @@ input[type='range'] { width: 130px; accent-color: var(--accent); }
 .help-list li { margin-bottom: 7px; }
 .muted { color: var(--text-mute); }
 .small { font-size: 11.5px; }
+.source-link { color: var(--accent); text-decoration: none; }
+.source-link:hover { text-decoration: underline; }
 
 /* quiz */
 .quiz-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
@@ -673,6 +689,42 @@ body.mode-2d #plateStage { display: block; }
   will-change: transform;
 }
 .plate-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+/* An authentic 2D medical plate. It is visually distinct from the generated,
+   clickable SVG overlay so learners always know which kind of diagram they see. */
+.clinical-reference {
+  width: 100%; height: 100%; box-sizing: border-box; margin: 0;
+  padding: 14px 20px 12px;
+  display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 8px;
+  background: radial-gradient(ellipse at 50% 12%, rgba(53, 214, 198, 0.12), rgba(5, 10, 18, 0) 55%);
+}
+.clinical-reference-image-wrap {
+  width: min(100%, 680px); justify-self: center;
+  min-width: 0; min-height: 0; overflow: hidden;
+  display: grid; place-items: center;
+  border: 1px solid rgba(214, 226, 220, 0.22);
+  border-radius: 12px;
+  background: #f4f2eb;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+}
+.clinical-reference-image {
+  display: block; max-width: 100%; max-height: 100%;
+  width: auto; height: auto; object-fit: contain;
+  filter: saturate(1.03) contrast(1.02);
+}
+.clinical-reference-caption {
+  width: min(720px, 100%); justify-self: center;
+  box-sizing: border-box;
+  display: flex; align-items: baseline; justify-content: center; flex-wrap: wrap; gap: 4px 9px;
+  padding: 7px 11px; border: 1px solid var(--panel-brd); border-radius: 9px;
+  background: rgba(8, 13, 22, 0.82); color: var(--text-mute);
+  font-size: 10.5px; line-height: 1.35; text-align: center;
+}
+.clinical-reference-caption strong { color: #effbff; font-size: 11.5px; }
+.clinical-reference-credit { color: #c7d8df; }
+.clinical-reference-caption a, .plate-meta a { color: var(--accent); text-decoration: none; }
+.clinical-reference-caption a:hover, .plate-meta a:hover { text-decoration: underline; }
+
 .plate-svg path[data-part] { cursor: pointer; transition: filter 0.12s; }
 .plate-svg .hb-hover {
   filter: drop-shadow(0 0 6px rgba(255, 179, 71, 0.85)) brightness(1.16);
@@ -718,7 +770,7 @@ body.mode-2d #plateStage { display: block; }
   border: 1px solid var(--panel-brd);
   border-radius: 999px;
   padding: 4px 10px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .plate-meta b { color: var(--text-dim); font-weight: 600; }
 

@@ -14,7 +14,8 @@ chondrocyte mechanotransduction, zonal collagen architecture and osteoarthritis 
 |---|---|
 | **156** | anatomy entries, from "Head" to "Telomere attrition" |
 | **13** | systems: surface regions, skeletal, muscular, nervous, cardiovascular, respiratory, digestive, urinary, endocrine, lymphatic/immune, reproductive, integumentary and the microscopic world |
-| **1,000+** | 3D meshes generated procedurally in code (no external model files, no downloads) |
+| **2.1M+** | source-derived clinical 3D triangles across eight lazily loaded BodyParts3D / Z-Anatomy layers |
+| **1,000+** | lightweight procedural teaching meshes retained as an immediate offline/loading fallback and interactive overlay |
 | **22** | microscopic models — cell, nucleus, mitochondria, DNA, nephron, alveoli, villi, osteon, neuron, placenta, reflex arc, feedback loops … |
 | **5** | learning levels, each rewriting every explanation |
 | **5** | guided tours and an endless self-testing quiz |
@@ -34,18 +35,19 @@ The 3D scene changes with the level too: gross structures first, finer branches 
 heart valves, bronchi, meninges, islets, sympathetic chain) appear as you move up, and the
 **microscopic world** unlocks from level 4.
 
-### 3D and 2D, from one model
+### Real 3D and 2D anatomy, with a teaching overlay when needed
 
-Switch with the segmented control in the top bar (or press **P**). Both views are the *same*
-figure, so every filter you set — level, systems, x-ray, isolation — applies to both.
+Switch with the segmented control in the top bar (or press **P**). The 3D viewer lazily loads
+bundled source-derived clinical geometry as each system is enabled, keeping the fast procedural
+model visible only while a source layer loads or if an asset cannot be read.
 
 | | |
 |---|---|
-| **🧍 3D** | orbit, zoom, slice, x-ray, hover-pick any structure; studio lighting with a soft contact shadow and a small idle sway |
-| **🖼 2D** | a flat anatomical plate **projected from the live meshes** — silhouette loops are traced per structure, shaded by their real normals, and laid out with leader-line labels. Drag to pan, scroll to zoom, click a region to open it, and save the plate as **SVG** (vector, prints at any size) or **PNG** |
+| **🧍 3D** | orbit, zoom, slice, x-ray and click source-derived anatomy. The BodyParts3D / Z-Anatomy system exports are merged into a few efficient render meshes while preserving broad-part raycast selection. |
+| **🖼 2D** | opens to a locally bundled, licensed **real anatomical reference plate** (whole-body, skeletal, or muscular as appropriate). Its caption contains source and licence information. The **Interactive overlay** switch restores the projected, clickable educational plate with labels and SVG/PNG export. |
 
-The 2D plate is also the fallback when WebGL is unavailable: the app opens straight into it,
-so the atlas still works on a locked-down school laptop.
+The 2D reference plate is also the fallback when WebGL is unavailable, so the atlas still works
+on a locked-down school laptop.
 
 <table>
   <tr>
@@ -64,10 +66,10 @@ so the atlas still works on a locked-down school laptop.
 - **🔬 Micro view.** From level 4, open a part and dive into a 3D cell, a nephron, an alveolus or a DNA helix.
 - **🎯 Quiz.** Generated from the real atlas text, at your level, on one system or the whole body.
 - **🎒 Tour.** A scripted lesson per level that flies the camera and narrates as it goes.
-- **♀ / ♂ + complexion.** The body-type switch changes the skeleton-wide proportions (shoulder
-  and pelvis widths, waist, bust, jaw, hair length), not just the reproductive organs; five
-  complexion swatches retint skin, lips, nails and hair.
-- **🖼 2D plate.** Press **P** for the flat view; **L** toggles its labels; the toolbar saves it as SVG or PNG.
+- **♀ / ♂ + complexion.** The teaching fallback adapts proportions and reproductive anatomy;
+  five complexion swatches retint its skin, lips, nails and hair. The source-derived whole-body
+  reference is a shared adult atlas, while its male reproductive source layer is shown only in male mode.
+- **🖼 2D plate.** Press **P** for a source-authentic reference illustration; switch to **Interactive overlay** to click regions, toggle labels with **L**, and export SVG or PNG.
 - **Search** (`/`) • **1–5** levels • **P** 2D/3D • **X** x-ray • **R** reset view • **Esc** close.
 
 ---
@@ -135,9 +137,11 @@ src/
     parts/*.js              the anatomy content (one file per system)
     index.js                aggregation + search
   atlas/
-    plate.js                3D → 2D projection: silhouette tracing, shading, labels, SVG
-    stage2d.js              the interactive 2D stage (pan, zoom, pick, export)
+    reference.js            source/authorship metadata for real 2D reference plates
+    plate.js                procedural teaching model → interactive 2D projection
+    stage2d.js              reference-plate and interactive-overlay stage (pan, zoom, pick, export)
   scene/
+    clinical-models.js      lazy source-derived GLB loader, source-part mapping and exact selection overlay
     anatomy.js              shared measurement tables: proportions, trunk/head/limb lofts, tones
     materials.js            procedural skin (pores, mottling, sheen, clearcoat) and hair/nails
     helpers.js              landmarks, materials, geometry helpers
@@ -155,23 +159,19 @@ src/
 
 ### How the body is drawn
 
-There are no downloaded model files. Every bone, organ and vessel is generated in JavaScript from
-primitives — lathes for tapered limbs, tubes along curves for vessels and gut, displaced
-icosahedra for organs, and procedural gyri on the brain. That keeps the whole atlas
-**~1 MB gzipped**, offline-capable and easy to edit: change a number in `src/scene/helpers.js`
-and the anatomy moves.
+The clinical whole-body systems are locally bundled GLB exports derived from **BodyParts3D** and
+**Z-Anatomy**. They retain real source topology—individual bones, muscles, vessels and organs—but
+are converted at load time into one or a few colour-coded composite meshes per system. A compact
+per-vertex structure attribute preserves precise coarse-atlas picking; an exact extracted source
+submesh is drawn only for the selected part. This keeps the live renderer practical without
+replacing anatomy with spheres and tubes.
 
-Coordinates are in metres on one shared frame (feet at `y = -0.90`, crown at `y ≈ +0.91`),
-documented in `src/scene/helpers.js`.
-
-The soft parts are **lofted**, not boxed: `src/scene/anatomy.js` holds cross-section tables
-(trunk rings from pelvis to shoulders, neck, ten head sections, limb profiles, palm and finger
-lengths), and `loftGeometry` sweeps ellipsoid rings between them with correct winding, shared
-boundary rings between neighbouring bands (so no seams or z-fighting) and a Lambert term that
-biases each cross-section's centre forward, back, left or right — which is how the chest leans
-into the breasts, the back bulges over the scapulae, and the abdomen overhangs the pubis.
-Because the 3D figure and the 2D plate read the same tables, retuning a number fixes both views
-at once.
+The legacy code-generated body is deliberately retained as a tiny immediate fallback and as the
+clickable 2D overlay source. Its soft parts are **lofted**, not boxed:
+`src/scene/anatomy.js` holds cross-section tables (trunk rings from pelvis to shoulders, neck,
+ten head sections, limb profiles, palm and finger lengths), and `loftGeometry` sweeps ellipsoid
+rings between them with correct winding and shared boundaries. Coordinates in both worlds meet on
+the same scene frame (feet at `y = -0.90`, crown at `y ≈ +0.91`).
 
 ### Adding content
 
@@ -201,10 +201,16 @@ shape, add meshes with the same id in the matching builder; to give it a microsc
 
 ## Scope and honesty
 
-This is a teaching model, not a medical device. The anatomy is **stylised**: proportions and
-shapes are correct in outline (laterality, levels and relations follow standard anatomy) but
-simplified, and it is not patient-specific. Always consult a clinician for medical decisions.
+This is a teaching atlas, not a medical device. Its clinical 3D layers and reference plates are
+real source-derived anatomical resources, but they are not patient-specific and the atlas’s
+coarse educational mappings, colours, overlays and text are simplified for learning. Always
+consult a clinician for medical decisions.
 
-## License
+## Licence and attribution
 
-MIT — see [LICENSE](LICENSE). Built with [three.js](https://threejs.org/) (MIT).
+The application code is MIT — see [LICENSE](LICENSE). The bundled clinical GLB data is
+**CC BY-SA 4.0** derivative data from BodyParts3D (DBCLS, CC BY-SA 2.1 Japan) and Z-Anatomy;
+redistribution requires attribution and ShareAlike. The reference plates have their own credited
+licences. See [ATTRIBUTION.md](ATTRIBUTION.md) and the built-site
+[`public/ATTRIBUTION.md`](public/ATTRIBUTION.md) for the full notices. Built with
+[three.js](https://threejs.org/) (MIT).

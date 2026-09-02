@@ -75,7 +75,7 @@ const MICRO_ALIASES = {
 };
 
 function reindex(human) {
-  const { root, systems, SYSTEM_ORDER } = human;
+  const { systems, SYSTEM_ORDER } = human;
   const byPart = new Map();
   const allMeshes = [];
   for (const key of SYSTEM_ORDER) {
@@ -93,6 +93,16 @@ function reindex(human) {
       byPart.get(o.userData.partId).push(o);
     });
   }
+
+  // Source-derived clinical layers live in a sibling root rather than inside
+  // the procedural system groups. That lets complexion/body-type rebuilds
+  // replace their fallback meshes without unloading a large GLB. A composite
+  // knows its fine-grained part id from the raycast attribute; do not add it
+  // to `byPart` here, or every coarse part would focus the whole source layer.
+  human.referenceRoot?.traverse((o) => {
+    if (o.isMesh && o.userData.referenceComposite) allMeshes.push(o);
+  });
+
   human.byPart = byPart;
   human.allMeshes = allMeshes;
 }
@@ -146,6 +156,10 @@ export function buildHumanoid(reproductiveVariant = 'female', { skin = DEFAULT_T
   });
 
   reindex(human);
+  // ClinicalAnatomy is attached later by Viewer. Expose the same registry
+  // rebuild used by body-type changes so asynchronously added source meshes
+  // participate in visibility and raycasting immediately.
+  human.reindex = () => { reindex(human); return human; };
 
   const resolveMicroModel = (partId) => {
     const direct = microModels.get(partId);
@@ -175,6 +189,7 @@ export function buildHumanoid(reproductiveVariant = 'female', { skin = DEFAULT_T
    * and hair as well as in gonads.
    */
   human.setVariant = (variant) => {
+    human.clearReferenceHighlight?.();
     human.variant = variant;
     relayer('reproductive', () => buildReproductive(variant));
     relayer('surface', () => buildSurface({ variant, skin: human.skin }));
@@ -185,9 +200,11 @@ export function buildHumanoid(reproductiveVariant = 'female', { skin = DEFAULT_T
 
   /** Complexion: rebuilds the skin and the hair tone that goes with it. */
   human.setSkin = (skin) => {
+    human.clearReferenceHighlight?.();
     human.skin = skin;
     relayer('surface', () => buildSurface({ variant: human.variant, skin }));
     relayer('integumentary', () => buildIntegumentary({ variant: human.variant, skin }));
+    human.setReferenceSkin?.(skin);
     reindex(human);
     return human;
   };

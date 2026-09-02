@@ -21,6 +21,7 @@ export class PlateView {
     this.zoom = 1;
     this.pan = { x: 0, y: 0 };
     this.state = {};
+    this.reference = null;
     this.host.innerHTML = `
       <div class="plate-viewport">
         <div class="plate-canvas" data-role="canvas"></div>
@@ -194,11 +195,53 @@ export class PlateView {
 
   /* ---------------- build ---------------- */
   /**
-   * Rebuild the plate from the current model + UI state.
+   * Show an independently licensed medical illustration. This is deliberately
+   * not presented as a generated SVG: it is a source-authentic 2D reference
+   * plate, while `render()` below keeps the app's clickable teaching overlay.
+   */
+  renderReference(reference, opts = {}) {
+    if (!reference) return 0;
+    this.state = opts;
+    this.reference = reference;
+    this.plate = null;
+    this.frame = null;
+    this.svg = null;
+    this._hoverId = null;
+    const t0 = performance.now();
+    this.canvas.innerHTML = `
+      <figure class="clinical-reference" aria-labelledby="clinicalReferenceTitle">
+        <div class="clinical-reference-image-wrap">
+          <img class="clinical-reference-image" src="${reference.src}" alt="${reference.title}: ${reference.description}" draggable="false" />
+        </div>
+        <figcaption class="clinical-reference-caption">
+          <strong id="clinicalReferenceTitle">${reference.title}</strong>
+          <span>${reference.description}</span>
+          <span class="clinical-reference-credit">${reference.attribution} · ${reference.license}</span>
+          <a href="${reference.sourceUrl}" target="_blank" rel="noopener noreferrer">${reference.sourceLabel} ↗</a>
+        </figcaption>
+      </figure>`;
+    this.buildMs = Math.round(performance.now() - t0);
+    return this.buildMs;
+  }
+
+  /** Retrieve the local PNG when the reference-mode download button is used. */
+  async referencePNG() {
+    if (!this.reference) return null;
+    try {
+      const response = await fetch(this.reference.src);
+      return response.ok ? response.blob() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Rebuild the interactive plate from the current model + UI state.
    * @param {object} human humanoid (viewer.human)
    * @param {object} opts  { view, systems, level, isolate, xray, labels, selected }
    */
   render(human, opts = {}) {
+    this.reference = null;
     if (!human) return 0;
     this.state = opts;
     const {
